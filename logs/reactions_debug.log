@@ -1,0 +1,75 @@
+2025-05-19 19:38:53,218 - reaction_functions - INFO - Démarrage de remove_reactions - Line: 487
+2025-05-19 19:38:53,461 - reaction_functions - DEBUG - Post index string: 0 - Line: 497
+2025-05-19 19:38:53,461 - reaction_functions - DEBUG - Post index converti: 0 - Line: 499
+2025-05-19 19:38:53,461 - reaction_functions - DEBUG - Type de post: document - Line: 542
+2025-05-19 19:38:53,462 - reaction_functions - DEBUG - Réactions supprimées - Line: 544
+2025-05-19 19:38:53,462 - reaction_functions - DEBUG - Mise à jour du message pour un post de type document - Line: 563
+2025-05-19 19:38:53,982 - reaction_functions - INFO - Fin réussie de remove_reactions - Line: 593
+2025-05-19 21:14:14,784 - reaction_functions - INFO - Démarrage de remove_reactions - Line: 487
+2025-05-19 21:14:15,022 - reaction_functions - DEBUG - Post index string: 0 - Line: 497
+2025-05-19 21:14:15,022 - reaction_functions - DEBUG - Post index converti: 0 - Line: 499
+2025-05-19 21:14:15,022 - reaction_functions - DEBUG - Type de post: document - Line: 542
+2025-05-19 21:14:15,022 - reaction_functions - DEBUG - Réactions supprimées - Line: 544
+2025-05-19 21:14:15,022 - reaction_functions - DEBUG - Mise à jour du message pour un post de type document - Line: 563
+2025-05-19 21:14:15,526 - reaction_functions - INFO - Fin réussie de remove_reactions - Line: 593
+2025-05-19 21:14:15,776 - reaction_functions - INFO - Démarrage de remove_reactions - Line: 487
+2025-05-19 21:14:16,017 - reaction_functions - DEBUG - Post index string: 0 - Line: 497
+2025-05-19 21:14:16,018 - reaction_functions - DEBUG - Post index converti: 0 - Line: 499
+2025-05-19 21:14:16,018 - reaction_functions - DEBUG - Type de post: document - Line: 542
+2025-05-19 21:14:16,018 - reaction_functions - DEBUG - Réactions supprimées - Line: 544
+2025-05-19 21:14:16,018 - reaction_functions - DEBUG - Mise à jour du message pour un post de type document - Line: 563
+2025-05-19 21:14:16,347 - reaction_functions - WARNING - Échec de la mise à jour du message: Message is not modified: specified new message content and reply markup are exactly the same as a current content and reply markup of the message - Line: 579
+2025-05-19 21:14:16,855 - reaction_functions - INFO - Fin réussie de remove_reactions - Line: 593
+2025-05-19 21:14:42,641 - reaction_functions - INFO - Démarrage de remove_reactions - Line: 487
+2025-05-19 21:14:42,909 - reaction_functions - DEBUG - Post index string: 0 - Line: 497
+2025-05-19 21:14:42,909 - reaction_functions - DEBUG - Post index converti: 0 - Line: 499
+2025-05-19 21:14:42,909 - reaction_functions - DEBUG - Type de post: document - Line: 542
+2025-05-19 21:14:42,910 - reaction_functions - DEBUG - Réactions supprimées - Line: 544
+2025-05-19 21:14:42,910 - reaction_functions - DEBUG - Mise à jour du message pour un post de type document - Line: 563
+2025-05-19 21:14:43,423 - reaction_functions - INFO - Fin réussie de remove_reactions - Line: 593
+2025-05-19 21:14:43,666 - reaction_functions - INFO - Démarrage de remove_reactions - Line: 487
+2025-05-19 21:14:43,897 - reaction_functions - DEBUG - Post index string: 0 - Line: 497
+2025-05-19 21:14:43,897 - reaction_functions - DEBUG - Post index converti: 0 - Line: 499
+2025-05-19 21:14:43,898 - reaction_functions - DEBUG - Type de post: document - Line: 542
+2025-05-19 21:14:43,898 - reaction_functions - DEBUG - Réactions supprimées - Line: 544
+2025-05-19 21:14:43,898 - reaction_functions - DEBUG - Mise à jour du message pour un post de type document - Line: 563
+2025-05-19 21:14:44,141 - reaction_functions - WARNING - Échec de la mise à jour du message: Message is not modified: specified new message content and reply markup are exactly the same as a current content and reply markup of the message - Line: 579
+2025-05-19 21:14:44,763 - reaction_functions - INFO - Fin réussie de remove_reactions - Line: 593
+2025-05-19 21:14:59,453 - reaction_functions - ERROR - Erreur lors de l'ajout de réactions: Message is not modified: specified new message content and reply markup are exactly the same as a current content and reply markup of the message - Line: 95
+2025-05-19 21:51:48,004 - reaction_functions - INFO - Démarrage de remove_reactions - Line: 485
+2025-05-19 21:51:48,247 - reaction_functions - DEBUG - Post index string: 0 - Line: 495
+2025-05-19 21:51:48,248 - reaction_functions - DEBUG - Post index converti: 0 - Line: 497
+2025-05-19 21:51:48,248 - reaction_functions - DEBUG - Type de post: document - Line: 540
+2025-05-19 21:51:48,248 - reaction_functions - DEBUG - Réactions supprimées - Line: 542
+2025-05-19 21:51:48,248 - reaction_functions - DEBUG - Mise à jour du message pour un post de type document - Line: 561
+2025-05-19 21:51:48,799 - reaction_functions - INFO - Fin réussie de remove_reactions - Line: 591
+2025-05-19 21:51:49,087 - reaction_functions - INFO - Démarrage de remove_reactions - Line: 485
+2025-05-19 21:51:49,400 - reaction_functions - DEBUG - Post index string: 0 - Line: 495
+2025-05-19 21:51:49,401 - reaction_functions - DEBUG - Post index converti: 0 - Line: 497
+2025-05-19 21:51:49,401 - reaction_functions - DEBUG - Type de post: document - Line: 540
+2025-05-19 21:51:49,401 - reaction_functions - DEBUG - Réactions supprimées - Line: 542
+2025-05-19 21:51:49,401 - reaction_functions - DEBUG - Mise à jour du message pour un post de type document - Line: 561
+2025-05-19 21:51:49,659 - reaction_functions - WARNING - Échec de la mise à jour du message: Message is not modified: specified new message content and reply markup are exactly the same as a current content and reply markup of the message - Line: 577
+2025-05-19 21:51:50,191 - reaction_functions - INFO - Fin réussie de remove_reactions - Line: 591
+2025-05-20 00:32:32,152 - reaction_functions - INFO - Démarrage de remove_reactions - Line: 494
+2025-05-20 00:32:32,402 - reaction_functions - DEBUG - Post index string: 0 - Line: 504
+2025-05-20 00:32:32,402 - reaction_functions - DEBUG - Post index converti: 0 - Line: 506
+2025-05-20 00:32:32,402 - reaction_functions - DEBUG - Type de post: document - Line: 549
+2025-05-20 00:32:32,402 - reaction_functions - DEBUG - Réactions supprimées - Line: 551
+2025-05-20 00:32:32,403 - reaction_functions - DEBUG - Mise à jour du message pour un post de type document - Line: 570
+2025-05-20 00:32:32,912 - reaction_functions - INFO - Fin réussie de remove_reactions - Line: 600
+2025-05-20 00:32:33,164 - reaction_functions - INFO - Démarrage de remove_reactions - Line: 494
+2025-05-20 00:32:33,406 - reaction_functions - DEBUG - Post index string: 0 - Line: 504
+2025-05-20 00:32:33,406 - reaction_functions - DEBUG - Post index converti: 0 - Line: 506
+2025-05-20 00:32:33,406 - reaction_functions - DEBUG - Type de post: document - Line: 549
+2025-05-20 00:32:33,406 - reaction_functions - DEBUG - Réactions supprimées - Line: 551
+2025-05-20 00:32:33,407 - reaction_functions - DEBUG - Mise à jour du message pour un post de type document - Line: 570
+2025-05-20 00:32:33,652 - reaction_functions - WARNING - Échec de la mise à jour du message: Message is not modified: specified new message content and reply markup are exactly the same as a current content and reply markup of the message - Line: 586
+2025-05-20 00:32:34,170 - reaction_functions - INFO - Fin réussie de remove_reactions - Line: 600
+2025-05-20 09:14:35,236 - reaction_functions - INFO - Adding URL button to post 0 - Line: 261
+2025-05-25 12:28:50,310 - mon_bot_telegram.reaction_functions - INFO - Erreur dans add_reactions_to_post: There is no text in the message to edit - Line: 83
+2025-05-25 12:29:07,686 - mon_bot_telegram.reaction_functions - INFO - Erreur dans add_url_button_to_post: There is no text in the message to edit - Line: 83
+2025-05-25 12:29:10,538 - mon_bot_telegram.reaction_functions - INFO - Erreur dans add_reactions_to_post: There is no text in the message to edit - Line: 83
+2025-05-25 12:52:08,137 - mon_bot_telegram.reaction_functions - INFO - [Message avec emojis] Ractions reues: '/...' - Line: 83
+2025-05-25 12:52:08,138 - mon_bot_telegram.reaction_functions - INFO - [Message avec emojis] Traitement des ractions pour le post 0: 2 ractions - Line: 83
+2025-05-25 12:52:08,139 - mon_bot_telegram.reaction_functions - INFO - [Message avec emojis] Ractions ajoutes au post 0: 2 ractions - Line: 83
