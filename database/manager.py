@@ -87,6 +87,38 @@ class DatabaseManager:
                 )
             ''')
 
+            # Migration : Ajouter la colonne post_type si elle n'existe pas
+            try:
+                cursor.execute("ALTER TABLE posts ADD COLUMN post_type TEXT")
+                logger.info("✅ Colonne post_type ajoutée à la table posts")
+            except sqlite3.OperationalError:
+                logger.info("ℹ️ Colonne post_type existe déjà")
+            
+            # Migration : Mettre à jour les posts existants sans post_type
+            try:
+                cursor.execute("UPDATE posts SET post_type = 'text' WHERE post_type IS NULL")
+                updated_rows = cursor.rowcount
+                if updated_rows > 0:
+                    logger.info(f"✅ {updated_rows} posts mis à jour avec post_type = 'text'")
+            except sqlite3.OperationalError:
+                pass
+
+            # Migration : Ajouter la colonne status si elle n'existe pas
+            try:
+                cursor.execute("ALTER TABLE posts ADD COLUMN status TEXT")
+                logger.info("✅ Colonne status ajoutée à la table posts")
+            except sqlite3.OperationalError:
+                logger.info("ℹ️ Colonne status existe déjà")
+            
+            # Migration : Mettre à jour les posts existants sans status
+            try:
+                cursor.execute("UPDATE posts SET status = 'pending' WHERE status IS NULL")
+                updated_rows = cursor.rowcount
+                if updated_rows > 0:
+                    logger.info(f"✅ {updated_rows} posts mis à jour avec status = 'pending'")
+            except sqlite3.OperationalError:
+                pass
+
             # Table des fuseaux horaires des utilisateurs
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS user_timezones (

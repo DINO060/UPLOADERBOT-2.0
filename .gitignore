@@ -1,0 +1,13 @@
+# Ignore all downloads files
+downloads/*
+!downloads/.gitkeep
+
+# Python & cache
+__pycache__/
+*.pyc
+
+# Env et session
+.env
+*.env
+*.session
+.venv/

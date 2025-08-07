@@ -11,6 +11,9 @@ import logging
 import asyncio
 import sqlite3
 import io
+import tempfile
+import uuid
+import shutil
 from datetime import datetime, timedelta
 from functools import wraps
 from typing import Optional, List, Dict, Any, Callable, Awaitable
@@ -39,8 +42,8 @@ from conversation_states import (
     WAITING_CHANNEL_INFO, SETTINGS, BACKUP_MENU, WAITING_CHANNEL_SELECTION,
     WAITING_PUBLICATION_CONTENT, WAITING_TIMEZONE, WAITING_THUMBNAIL,
     WAITING_REACTION_INPUT, WAITING_URL_INPUT, WAITING_RENAME_INPUT,
-    WAITING_SCHEDULE_TIME, WAITING_EDIT_TIME, WAITING_CUSTOM_USERNAME,
-    WAITING_TAG_INPUT
+    WAITING_THUMBNAIL_RENAME_INPUT, WAITING_SCHEDULE_TIME, WAITING_EDIT_TIME,
+    WAITING_CUSTOM_USERNAME, WAITING_TAG_INPUT
 )
 from config import settings
 from database.manager import DatabaseManager
@@ -132,59 +135,55 @@ async def handle_reply_keyboard(update: Update, context: ContextTypes.DEFAULT_TY
                 # Afficher l'aperçu détaillé des posts
                 for i, post in enumerate(posts):
                     try:
-                        preview_text = f"📋 **Aperçu post {i + 1}**\n\n"
-                        preview_text += f"Type: {post.get('type', 'Inconnu')}\n"
-                        preview_text += f"Canal: {post.get('channel_name', 'Non défini')}\n"
+                        # Message simple comme demandé
+                        preview_text = "The post preview sent above.\n\n"
+                        preview_text += "You have 1 message in this post:\n"
+                        
+                        # Déterminer le type d'icône selon le type de fichier
+                        if post.get('type') == 'photo':
+                            preview_text += "1. 📸 Photo"
+                        elif post.get('type') == 'video':
+                            preview_text += "1. 📹 Video"
+                        elif post.get('type') == 'document':
+                            preview_text += "1. 📄 Document"
+                        else:
+                            preview_text += "1. 📝 Text"
+                        
+                        # Ajouter l'heure actuelle
+                        from datetime import datetime
+                        current_time = datetime.now().strftime("%I:%M %p")
+                        preview_text += f" {current_time}"
                         
                         if post.get('type') == 'text':
-                            content_preview = post.get('content', '')[:200]
-                            if len(post.get('content', '')) > 200:
-                                content_preview += '...'
-                            preview_text += f"Contenu: {content_preview}"
-                            await update.message.reply_text(preview_text, parse_mode="Markdown")
+                            await update.message.reply_text(preview_text)
                         else:
-                            caption_preview = post.get('caption', '')
-                            if caption_preview:
-                                preview_text += f"Légende: {caption_preview[:100]}"
-                                if len(caption_preview) > 100:
-                                    preview_text += '...'
-                            
+                            # Envoyer d'abord le fichier sans caption
                             if post.get('type') == 'photo':
                                 await context.bot.send_photo(
                                     chat_id=update.effective_chat.id,
-                                    photo=post.get('content'),
-                                    caption=preview_text,
-                                    parse_mode="Markdown"
+                                    photo=post.get('content')
                                 )
                             elif post.get('type') == 'video':
                                 await context.bot.send_video(
                                     chat_id=update.effective_chat.id,
-                                    video=post.get('content'),
-                                    caption=preview_text,
-                                    parse_mode="Markdown"
+                                    video=post.get('content')
                                 )
                             elif post.get('type') == 'document':
                                 await context.bot.send_document(
                                     chat_id=update.effective_chat.id,
-                                    document=post.get('content'),
-                                    caption=preview_text,
-                                    parse_mode="Markdown"
+                                    document=post.get('content')
                                 )
+                            
+                            # Puis envoyer le message texte séparément
+                            await context.bot.send_message(
+                                chat_id=update.effective_chat.id,
+                                text=preview_text
+                            )
                     except Exception as e:
                         logger.error(f"Erreur aperçu post {i}: {e}")
                         await update.message.reply_text(f"❌ Erreur aperçu post {i + 1}")
                 
-                # Message de synthèse avec actions
-                await update.message.reply_text(
-                    f"📋 **Aperçu terminé** - {len(posts)} publication(s) affichée(s)",
-                    reply_markup=InlineKeyboardMarkup([[
-                        InlineKeyboardButton("🚀 Envoyer maintenant", callback_data="send_now"),
-                        InlineKeyboardButton("📝 Modifier", callback_data="edit_posts")
-                    ], [
-                        InlineKeyboardButton("↩️ Menu principal", callback_data="main_menu")
-                    ]]),
-                    parse_mode='Markdown'
-                )
+                # Retour au menu principal sans message de synthèse
                 return WAITING_PUBLICATION_CONTENT
         
         elif "envoyer" in user_text.lower():
@@ -201,18 +200,15 @@ async def handle_reply_keyboard(update: Update, context: ContextTypes.DEFAULT_TY
                 )
                 return MAIN_MENU
             else:
-                # Supprimer tous les posts
+                # Supprimer tous les posts mais garder le canal sélectionné
                 context.user_data['posts'] = []
-                context.user_data.pop('selected_channel', None)
+                # Ne pas supprimer le canal : context.user_data.pop('selected_channel', None)
                 
                 await update.message.reply_text(
-                    f"🗑️ **Publications supprimées**\n\n{len(posts)} publication(s) supprimée(s) avec succès.",
-                    reply_markup=InlineKeyboardMarkup([[
-                        InlineKeyboardButton("↩️ Menu principal", callback_data="main_menu")
-                    ]]),
-                    parse_mode='Markdown'
+                    f"🗑️ **Publications supprimées**\n\n{len(posts)} publication(s) supprimée(s) avec succès.\n\n📤 Envoyez maintenant vos nouveaux fichiers :",
+                    reply_markup=create_reply_keyboard()
                 )
-                return MAIN_MENU
+                return WAITING_PUBLICATION_CONTENT
         
         elif "annuler" in user_text.lower():
             # Nettoyer toutes les données
@@ -715,7 +711,7 @@ async def handle_delete_thumbnail(update, context):
     return SETTINGS
 
 async def handle_rename_input(update, context):
-    """Gère la saisie du nouveau nom de fichier"""
+    """Gère la saisie du nouveau nom de fichier (comme dans renambot)"""
     try:
         if not context.user_data.get('waiting_for_rename') or 'current_post_index' not in context.user_data:
             await update.message.reply_text(
@@ -729,33 +725,129 @@ async def handle_rename_input(update, context):
         post_index = context.user_data['current_post_index']
         new_filename = update.message.text.strip()
         
-        # Les boutons ReplyKeyboard sont maintenant gérés par le handler contextuel
-        # Cette fonction ne traite que les vrais noms de fichiers
-        
         # Validation du nom de fichier
-        if not new_filename or '/' in new_filename or '\\' in new_filename:
+        if not new_filename:
             await update.message.reply_text(
-                "❌ Nom de fichier invalide. Évitez les caractères spéciaux / et \\.",
+                "❌ Veuillez fournir un nom de fichier valide.",
                 reply_markup=InlineKeyboardMarkup([[
                     InlineKeyboardButton("❌ Annuler", callback_data=f"cancel_rename_{post_index}")
                 ]])
             )
             return WAITING_RENAME_INPUT
         
-        # Appliquer le nouveau nom
+        # Appliquer le nouveau nom et envoyer le fichier
         if 'posts' in context.user_data and post_index < len(context.user_data['posts']):
-            context.user_data['posts'][post_index]['filename'] = new_filename
+            post_data = context.user_data['posts'][post_index]
             
             # Nettoyer les variables temporaires
             context.user_data.pop('waiting_for_rename', None)
             context.user_data.pop('current_post_index', None)
             
-            await update.message.reply_text(
-                f"✅ Fichier renommé en : {new_filename}",
-                reply_markup=InlineKeyboardMarkup([[
-                    InlineKeyboardButton("↩️ Menu principal", callback_data="main_menu")
-                ]])
-            )
+            # Supprimer les messages précédents (fichier original + demande de renommage)
+            try:
+                # Supprimer le message de demande de renommage
+                if 'rename_prompt_message_id' in context.user_data:
+                    try:
+                        await context.bot.delete_message(
+                            chat_id=update.effective_chat.id,
+                            message_id=context.user_data['rename_prompt_message_id']
+                        )
+                    except Exception as e:
+                        logger.warning(f"Impossible de supprimer le message de demande: {e}")
+                    context.user_data.pop('rename_prompt_message_id', None)
+                
+                # Supprimer le message du fichier original (si on a son ID)
+                if 'original_file_message_id' in context.user_data:
+                    try:
+                        await context.bot.delete_message(
+                            chat_id=update.effective_chat.id,
+                            message_id=context.user_data['original_file_message_id']
+                        )
+                    except Exception as e:
+                        logger.warning(f"Impossible de supprimer le fichier original: {e}")
+                    context.user_data.pop('original_file_message_id', None)
+                
+            except Exception as e:
+                logger.warning(f"Erreur lors de la suppression des messages: {e}")
+            
+            # Envoyer le fichier avec le nouveau nom et le thumbnail (si défini)
+            try:
+                # Créer les boutons comme dans les autres fonctions
+                buttons = []
+                
+                # Bouton pour ajouter des réactions
+                if not post_data.get('reactions'):
+                    buttons.append([InlineKeyboardButton("✨ Ajouter des réactions", callback_data=f"add_reactions_{post_index}")])
+                else:
+                    buttons.append([InlineKeyboardButton("🗑️ Supprimer les réactions", callback_data=f"remove_reactions_{post_index}")])
+                
+                # Bouton pour ajouter un bouton URL
+                if not post_data.get('buttons'):
+                    buttons.append([InlineKeyboardButton("🔗 Ajouter un bouton URL", callback_data=f"add_url_button_{post_index}")])
+                else:
+                    buttons.append([InlineKeyboardButton("🗑️ Supprimer le bouton URL", callback_data=f"remove_url_{post_index}")])
+                
+                # Boutons d'édition et suppression
+                buttons.append([
+                    InlineKeyboardButton("✏️ Edit File", callback_data=f"rename_post_{post_index}"),
+                    InlineKeyboardButton("❌ Supprimer", callback_data=f"delete_post_{post_index}")
+                ])
+                
+                reply_markup = InlineKeyboardMarkup(buttons)
+                
+                # Récupérer le thumbnail s'il a été défini
+                thumbnail_id = post_data.get('thumbnail')
+                caption_text = f"<code>{new_filename}</code>"
+                
+                # Ajouter indication si thumbnail appliqué
+                if thumbnail_id:
+                    caption_text += "\n🖼️ <i>Thumbnail appliqué</i>"
+                
+                # Envoyer avec thumbnail si disponible
+                if post_data['type'] == 'photo':
+                    await context.bot.send_photo(
+                        chat_id=update.effective_chat.id,
+                        photo=post_data['content'],
+                        caption=caption_text,
+                        parse_mode="HTML",
+                        reply_markup=reply_markup
+                    )
+                elif post_data['type'] == 'video':
+                    await context.bot.send_video(
+                        chat_id=update.effective_chat.id,
+                        video=post_data['content'],
+                        caption=caption_text,
+                        parse_mode="HTML",
+                        reply_markup=reply_markup,
+                        thumbnail=thumbnail_id  # Appliquer le thumbnail pour les vidéos
+                    )
+                elif post_data['type'] == 'document':
+                    await context.bot.send_document(
+                        chat_id=update.effective_chat.id,
+                        document=post_data['content'],
+                        caption=caption_text,
+                        parse_mode="HTML",
+                        reply_markup=reply_markup,
+                        thumbnail=thumbnail_id  # Appliquer le thumbnail pour les documents
+                    )
+                elif post_data['type'] == 'text':
+                    await context.bot.send_message(
+                        chat_id=update.effective_chat.id,
+                        text=f"<code>{new_filename}</code>",
+                        parse_mode="HTML",
+                        reply_markup=reply_markup
+                    )
+                
+                logger.info(f"✅ Fichier renommé et envoyé avec boutons: {new_filename}")
+                
+            except Exception as e:
+                logger.error(f"Erreur lors de l'envoi du fichier renommé: {e}")
+                await update.message.reply_text(
+                    "⚠️ Fichier renommé mais erreur lors de l'envoi.",
+                    reply_markup=InlineKeyboardMarkup([[
+                        InlineKeyboardButton("↩️ Menu principal", callback_data="main_menu")
+                    ]])
+                )
             
             return WAITING_PUBLICATION_CONTENT
         else:
@@ -771,6 +863,239 @@ async def handle_rename_input(update, context):
         logger.error(f"Erreur dans handle_rename_input: {e}")
         await update.message.reply_text(
             "❌ Une erreur est survenue.",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("↩️ Menu principal", callback_data="main_menu")
+            ]])
+        )
+        return MAIN_MENU
+
+async def handle_thumbnail_rename_input(update, context):
+    """Gère la saisie du nouveau nom après l'ajout du thumbnail (comme dans renambot)"""
+    try:
+        if not context.user_data.get('waiting_for_thumbnail_rename') or 'current_post_index' not in context.user_data:
+            await update.message.reply_text(
+                "❌ Aucun traitement thumbnail+rename en cours.",
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton("↩️ Menu principal", callback_data="main_menu")
+                ]])
+            )
+            return MAIN_MENU
+        
+        post_index = context.user_data['current_post_index']
+        new_filename = update.message.text.strip()
+        
+        # Validation du nom de fichier
+        if not new_filename:
+            await update.message.reply_text(
+                "❌ Veuillez fournir un nom de fichier valide.",
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton("❌ Annuler", callback_data="main_menu")
+                ]])
+            )
+            return WAITING_THUMBNAIL_RENAME_INPUT
+        
+        # Appliquer le nouveau nom et traiter avec thumbnail
+        if 'posts' in context.user_data and post_index < len(context.user_data['posts']):
+            # Traiter le fichier avec thumbnail + renommage
+            try:
+                # Traiter directement le fichier avec le nouveau nom (sans double téléchargement)
+                post_data = context.user_data['posts'][post_index]
+                post_type = post_data.get('type')
+                content = post_data.get('content')  # file_id original
+                caption = f"<code>{new_filename}</code>"
+                
+                # Récupérer le canal
+                channel_username = post_data.get('channel', context.user_data.get('selected_channel', {}).get('username'))
+                clean_username = normalize_channel_username(channel_username)
+                
+                # Récupérer le thumbnail
+                db_manager = DatabaseManager()
+                thumbnail_data = db_manager.get_thumbnail(clean_username, update.effective_user.id)
+                
+                if not thumbnail_data:
+                    await update.message.reply_text(
+                        f"❌ **Aucun thumbnail enregistré**\n\n"
+                        f"Aucun thumbnail trouvé pour @{clean_username}.",
+                        reply_markup=InlineKeyboardMarkup([[
+                            InlineKeyboardButton("↩️ Menu principal", callback_data="main_menu")
+                        ]])
+                    )
+                    return MAIN_MENU
+                
+                # Extraire le thumbnail
+                thumbnail_file_id = None
+                thumbnail_local_path = None
+                
+                if isinstance(thumbnail_data, dict):
+                    thumbnail_file_id = thumbnail_data.get('file_id')
+                    thumbnail_local_path = thumbnail_data.get('local_path')
+                else:
+                    thumbnail_file_id = thumbnail_data
+                
+                # Créer les boutons
+                buttons = []
+                
+                # Bouton pour ajouter des réactions
+                if not post_data.get('reactions'):
+                    buttons.append([InlineKeyboardButton("✨ Ajouter des réactions", callback_data=f"add_reactions_{post_index}")])
+                else:
+                    buttons.append([InlineKeyboardButton("🗑️ Supprimer les réactions", callback_data=f"remove_reactions_{post_index}")])
+                
+                # Bouton pour ajouter un bouton URL
+                if not post_data.get('buttons'):
+                    buttons.append([InlineKeyboardButton("🔗 Ajouter un bouton URL", callback_data=f"add_url_button_{post_index}")])
+                else:
+                    buttons.append([InlineKeyboardButton("🗑️ Supprimer le bouton URL", callback_data=f"remove_url_{post_index}")])
+                
+                # Boutons d'édition et suppression
+                buttons.append([
+                    InlineKeyboardButton("✏️ Edit File", callback_data=f"rename_post_{post_index}"),
+                    InlineKeyboardButton("❌ Supprimer", callback_data=f"delete_post_{post_index}")
+                ])
+                
+                reply_markup = InlineKeyboardMarkup(buttons)
+                
+                # Mettre à jour le nom de fichier dans le post puis réutiliser la pipeline officielle d'ajout de thumbnail
+                post_data['filename'] = new_filename
+                try:
+                    from handlers.callback_handlers import process_thumbnail_and_upload
+                    success = await process_thumbnail_and_upload(update, context, post_index)
+                except Exception as e:
+                    logger.error(f"Erreur process_thumbnail_and_upload: {e}")
+                    success = False
+                if not success:
+                    return MAIN_MENU
+                # Le handler gère l'envoi et l'affichage; on termine ici
+                return MAIN_MENU
+                
+            except Exception as e:
+                logger.error(f"Erreur lors du traitement thumbnail + renommage: {e}")
+                await update.message.reply_text(
+                    "❌ Une erreur est survenue lors du traitement.",
+                    reply_markup=InlineKeyboardMarkup([[
+                        InlineKeyboardButton("↩️ Menu principal", callback_data="main_menu")
+                    ]])
+                )
+                return MAIN_MENU
+                
+            return MAIN_MENU
+        else:
+            await update.message.reply_text(
+                "❌ Post introuvable.",
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton("↩️ Menu principal", callback_data="main_menu")
+                ]])
+            )
+            return MAIN_MENU
+    
+    except Exception as e:
+        logger.error(f"Erreur dans handle_thumbnail_rename_input: {e}")
+        await update.message.reply_text(
+            "❌ Une erreur est survenue.",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("↩️ Menu principal", callback_data="main_menu")
+            ]])
+        )
+        return MAIN_MENU
+
+async def handle_add_thumbnail_and_rename(update, context):
+    """Gère le bouton 'Add Thumbnail + Rename' - reproduit la fonctionnalité du renambot"""
+    query = update.callback_query
+    await query.answer()
+    
+    try:
+        # Extraire l'index du post
+        post_index = int(query.data.split("_")[-1])
+        
+        # Vérifier que le post existe
+        if 'posts' not in context.user_data or post_index >= len(context.user_data['posts']):
+            await context.bot.send_message(
+                chat_id=query.message.chat_id,
+                text="❌ Post introuvable.",
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton("↩️ Menu principal", callback_data="main_menu")
+                ]])
+            )
+            return MAIN_MENU
+        
+        post = context.user_data['posts'][post_index]
+        channel_username = post.get('channel', context.user_data.get('selected_channel', {}).get('username'))
+        user_id = update.effective_user.id
+        
+        # Utiliser la fonction de normalisation
+        clean_username = normalize_channel_username(channel_username)
+        
+        if not clean_username:
+            await context.bot.send_message(
+                chat_id=query.message.chat_id,
+                text="❌ Impossible de déterminer le canal cible.",
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton("↩️ Menu principal", callback_data="main_menu")
+                ]])
+            )
+            return MAIN_MENU
+        
+        # Récupérer le thumbnail
+        db_manager = DatabaseManager()
+        thumbnail_file_id = db_manager.get_thumbnail(clean_username, user_id)
+        
+        if not thumbnail_file_id:
+            await context.bot.send_message(
+                chat_id=query.message.chat_id,
+                text=f"❌ **Aucun thumbnail enregistré**\n\n"
+                     f"Aucun thumbnail trouvé pour @{clean_username}.\n"
+                     f"Veuillez d'abord configurer un thumbnail dans les paramètres.",
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton("⚙️ Paramètres", callback_data="settings"),
+                    InlineKeyboardButton("↩️ Menu principal", callback_data="main_menu")
+                ]])
+            )
+            return MAIN_MENU
+        
+        # Créer la carte MEDIA INFO exactement comme dans le renambot
+        file_type = post.get('type', 'unknown')
+        file_content = post.get('content', '')
+        file_caption = post.get('caption', '')
+        filename = post.get('filename', 'unnamed_file')
+        file_size = post.get('file_size', 'Unknown')
+        extension = os.path.splitext(filename)[1] or "Unknown"
+        mime_type = post.get('mime_type', 'Unknown')
+        dc_id = post.get('dc_id', 'N/A')
+        
+        info_card = f"""📁 <b>MEDIA INFO</b>
+
+📁 <b>FILE NAME:</b> <code>{filename}</code>
+🧩 <b>EXTENSION:</b> <code>{extension}</code>
+📦 <b>FILE SIZE:</b> {file_size}
+🪄 <b>MIME TYPE:</b> {mime_type}
+🧭 <b>DC ID:</b> {dc_id}
+
+<b>PLEASE ENTER THE NEW FILENAME WITH EXTENSION AND REPLY THIS MESSAGE.</b>"""
+        
+        # Stocker l'index pour le traitement thumbnail+rename
+        context.user_data['waiting_for_thumbnail_rename'] = True
+        context.user_data['current_post_index'] = post_index
+        
+        # Envoyer le message et stocker l'ID
+        ask_msg = await context.bot.send_message(
+            chat_id=query.message.chat_id,
+            text=info_card,
+            parse_mode='HTML',
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("❌ Annuler", callback_data=f"cancel_thumbnail_rename_{post_index}")
+            ]])
+        )
+        
+        # Stocker l'ID du message pour la validation des réponses
+        context.user_data['thumbnail_rename_prompt_message_id'] = ask_msg.message_id
+        
+        return WAITING_THUMBNAIL_RENAME_INPUT
+        
+    except Exception as e:
+        logger.error(f"Erreur dans handle_add_thumbnail_and_rename: {e}")
+        await context.bot.send_message(
+            chat_id=query.message.chat_id,
+            text="❌ Une erreur est survenue.",
             reply_markup=InlineKeyboardMarkup([[
                 InlineKeyboardButton("↩️ Menu principal", callback_data="main_menu")
             ]])
@@ -799,6 +1124,112 @@ def clean_channel_username(username):
     elif username.startswith('t.me/'):
         return username[5:]
     return username
+
+async def download_and_upload_with_thumbnail(context, file_id, new_filename, thumbnail_path, chat_id, post_type):
+    """
+    Télécharge un fichier et le re-upload avec thumbnail et nouveau nom
+    """
+    import tempfile
+    import shutil
+    import uuid
+    
+    temp_file = None
+    progress_msg = None
+    
+    try:
+        # Créer un nom de fichier temporaire unique
+        temp_filename = f"temp_{uuid.uuid4().hex[:8]}"
+        temp_file = os.path.join(tempfile.gettempdir(), temp_filename)
+        
+        # Message de progression
+        progress_msg = await context.bot.send_message(
+            chat_id=chat_id,
+            text="🖼️ **Traitement avec thumbnail...**"
+        )
+        
+        # Étape 1: Télécharger le fichier
+        await context.bot.edit_message_text(
+            chat_id=chat_id,
+            message_id=progress_msg.message_id,
+            text="📥 **Téléchargement du fichier...**"
+        )
+        
+        # Télécharger le fichier
+        file_info = await context.bot.get_file(file_id)
+        downloaded_path = await file_info.download_to_drive(temp_file)
+        
+        if not downloaded_path or not os.path.exists(downloaded_path):
+            raise Exception("Échec du téléchargement du fichier")
+        
+        # Étape 2: Upload avec thumbnail
+        await context.bot.edit_message_text(
+            chat_id=chat_id,
+            message_id=progress_msg.message_id,
+            text="📤 **Upload avec thumbnail...**"
+        )
+        
+        # Envoyer selon le type
+        if post_type == 'photo':
+            sent_message = await context.bot.send_photo(
+                chat_id=chat_id,
+                photo=open(downloaded_path, 'rb'),
+                caption=f"<code>{new_filename}</code>",
+                parse_mode="HTML",
+                filename=new_filename
+            )
+        elif post_type == 'video':
+            sent_message = await context.bot.send_video(
+                chat_id=chat_id,
+                video=open(downloaded_path, 'rb'),
+                caption=f"<code>{new_filename}</code>",
+                parse_mode="HTML",
+                filename=new_filename,
+                thumbnail=open(thumbnail_path, 'rb') if os.path.exists(thumbnail_path) else None
+            )
+        elif post_type == 'document':
+            sent_message = await context.bot.send_document(
+                chat_id=chat_id,
+                document=open(downloaded_path, 'rb'),
+                caption=f"<code>{new_filename}</code>",
+                parse_mode="HTML",
+                filename=new_filename,
+                thumbnail=open(thumbnail_path, 'rb') if os.path.exists(thumbnail_path) else None
+            )
+        else:
+            # Type par défaut: document
+            sent_message = await context.bot.send_document(
+                chat_id=chat_id,
+                document=open(downloaded_path, 'rb'),
+                caption=f"<code>{new_filename}</code>",
+                parse_mode="HTML",
+                filename=new_filename,
+                thumbnail=open(thumbnail_path, 'rb') if os.path.exists(thumbnail_path) else None
+            )
+        
+        # Supprimer le message de progression
+        await context.bot.delete_message(chat_id=chat_id, message_id=progress_msg.message_id)
+        
+        return sent_message
+        
+    except Exception as e:
+        logger.error(f"Erreur dans download_and_upload_with_thumbnail: {e}")
+        if progress_msg:
+            try:
+                await context.bot.edit_message_text(
+                    chat_id=chat_id,
+                    message_id=progress_msg.message_id,
+                    text=f"❌ **Erreur lors du traitement**\n\n{str(e)}"
+                )
+            except:
+                pass
+        raise e
+    finally:
+        # Nettoyer le fichier temporaire
+        if temp_file and os.path.exists(temp_file):
+            try:
+                os.remove(temp_file)
+            except:
+                pass
 
 
 async def remove_reactions(update, context):
@@ -915,8 +1346,8 @@ async def cleanup(application):
         
         # Arrêter le scheduler depuis l'application
         try:
-            if hasattr(application, 'scheduler_manager') and application.scheduler_manager:
-                application.scheduler_manager.stop()
+            if application.bot_data.get('scheduler_manager'):
+                application.bot_data['scheduler_manager'].stop()
         except:
             pass
         
@@ -1070,18 +1501,13 @@ def main():
         # Initialisation des compteurs de réactions globaux
         application.bot_data['reaction_counts'] = {}
 
-        # Initialisation du scheduler
-        application.scheduler_manager = SchedulerManager()
-        application.scheduler_manager.start()
-        logger.info("✅ Scheduler démarré avec succès")
-        
-        # Vérifier que le scheduler fonctionne
-        logger.info(f"🔍 Scheduler running: {application.scheduler_manager.scheduler.running}")
-        logger.info(f"🔍 Scheduler state: {application.scheduler_manager.scheduler.state}")
+        # Initialisation du scheduler (créer seulement, ne pas démarrer encore)
+        application.bot_data['scheduler_manager'] = SchedulerManager()
+        logger.info("✅ Scheduler manager créé avec succès")
         
         # Définir le scheduler manager global pour les callbacks
         from handlers.callback_handlers import set_global_scheduler_manager
-        set_global_scheduler_manager(application.scheduler_manager)
+        set_global_scheduler_manager(application.bot_data['scheduler_manager'])
         
         # Définir l'application globale pour les tâches planifiées
         from utils.scheduler_utils import set_global_application
@@ -1089,10 +1515,35 @@ def main():
         
         # ✅ CORRECTION : Définir aussi le scheduler manager dans scheduler_utils
         from utils.scheduler_utils import set_global_scheduler_manager as set_scheduler_utils_manager
-        set_scheduler_utils_manager(application.scheduler_manager)
+        set_scheduler_utils_manager(application.bot_data['scheduler_manager'])
+
+        # Fonction d'initialisation post-startup pour démarrer le scheduler
+        async def post_init(app: Application) -> None:
+            """Initialisation après le démarrage de l'application"""
+            try:
+                # Démarrer le scheduler maintenant que l'event loop est actif
+                app.bot_data['scheduler_manager'].start()
+                logger.info("✅ Scheduler démarré avec succès")
+                
+                # Vérifier que le scheduler fonctionne
+                logger.info(f"🔍 Scheduler running: {app.bot_data['scheduler_manager'].scheduler.running}")
+                logger.info(f"🔍 Scheduler state: {app.bot_data['scheduler_manager'].scheduler.state}")
+                
+                # Restaurer les posts planifiés
+                await restore_scheduled_posts(app)
+                
+                # Planifier les tâches de maintenance
+                await schedule_maintenance_tasks(app)
+                
+            except Exception as e:
+                logger.error(f"Erreur lors de l'initialisation post-startup: {e}")
+                raise
+        
+        # Ajouter le callback post_init
+        application.post_init = post_init
 
         # ✅ NOUVEAU : Restaurer les posts planifiés depuis la base de données
-        async def restore_scheduled_posts():
+        async def restore_scheduled_posts(app: Application):
             """Restaure tous les posts planifiés depuis la base de données au démarrage"""
             try:
                 logger.info("🔄 Restauration des posts planifiés...")
@@ -1154,7 +1605,7 @@ def main():
                                 async def send_post_async():
                                     from utils.scheduler_utils import send_scheduled_file
                                     post_dict = {"id": post_id}
-                                    await send_scheduled_file(post_dict, application)
+                                    await send_scheduled_file(post_dict, app)
                                 
                                 # Exécuter la fonction asynchrone
                                 loop.run_until_complete(send_post_async())
@@ -1167,7 +1618,7 @@ def main():
                                 logger.exception("Traceback:")
                         
                         # Ajouter le job au scheduler avec la fonction wrapper corrigée
-                        application.scheduler_manager.scheduler.add_job(
+                        app.bot_data['scheduler_manager'].scheduler.add_job(
                             func=send_restored_post_job,
                             trigger="date",
                             run_date=scheduled_time,
@@ -1188,44 +1639,38 @@ def main():
                 logger.error(f"❌ Erreur lors de la restauration des posts planifiés: {e}")
                 logger.exception("Traceback:")
         
-        # Exécuter la restauration
-        try:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            loop.run_until_complete(restore_scheduled_posts())
-        except Exception as e:
-            logger.error(f"❌ Erreur lors de la restauration des posts: {e}")
-
-        # ✅ NOUVEAU : Ajouter une tâche de nettoyage automatique des vieux fichiers
-        try:
-            from utils.file_manager import FileManager
-            file_manager = FileManager()
-            
-            # Fonction de nettoyage
-            def cleanup_old_files_job():
-                try:
-                    logger.info("🧹 Début du nettoyage automatique des vieux fichiers...")
-                    deleted_count = file_manager.cleanup_old_files(max_age_days=7)
-                    logger.info(f"✅ {deleted_count} fichiers supprimés")
-                except Exception as e:
-                    logger.error(f"❌ Erreur lors du nettoyage des fichiers: {e}")
-            
-            # Planifier le nettoyage tous les jours à 3h du matin
-            application.scheduler_manager.scheduler.add_job(
-                func=cleanup_old_files_job,
-                trigger="cron",
-                hour=3,
-                minute=0,
-                id="cleanup_old_files",
-                replace_existing=True
-            )
-            logger.info("✅ Tâche de nettoyage automatique planifiée (tous les jours à 3h)")
-            
-            # Exécuter un nettoyage immédiat au démarrage
-            cleanup_old_files_job()
-            
-        except Exception as e:
-            logger.warning(f"⚠️ Impossible de planifier le nettoyage automatique: {e}")
+        # Fonction pour planifier les tâches de maintenance 
+        async def schedule_maintenance_tasks(app: Application):
+            """Planifie les tâches de maintenance automatique"""
+            try:
+                from utils.file_manager import FileManager
+                file_manager = FileManager()
+                
+                # Fonction de nettoyage
+                def cleanup_old_files_job():
+                    try:
+                        logger.info("🧹 Début du nettoyage automatique des vieux fichiers...")
+                        deleted_count = file_manager.cleanup_old_files(max_age_days=7)
+                        logger.info(f"✅ {deleted_count} fichiers supprimés")
+                    except Exception as e:
+                        logger.error(f"❌ Erreur lors du nettoyage des fichiers: {e}")
+                
+                # Planifier le nettoyage tous les jours à 3h du matin
+                app.bot_data['scheduler_manager'].scheduler.add_job(
+                    func=cleanup_old_files_job,
+                    trigger="cron",
+                    hour=3,
+                    minute=0,
+                    id="cleanup_old_files",
+                    replace_existing=True
+                )
+                logger.info("✅ Tâche de nettoyage automatique planifiée (tous les jours à 3h)")
+                
+                # Exécuter un nettoyage immédiat au démarrage
+                cleanup_old_files_job()
+                
+            except Exception as e:
+                logger.warning(f"⚠️ Impossible de planifier le nettoyage automatique: {e}")
 
         # Initialisation des clients Pyrogram/Telethon pour les gros fichiers
         async def init_clients():
@@ -1340,6 +1785,10 @@ def main():
                     MessageHandler(filters.TEXT, handle_rename_input),
                     CallbackQueryHandler(handle_callback),
                 ],
+                WAITING_THUMBNAIL_RENAME_INPUT: [
+                    MessageHandler(filters.TEXT, handle_thumbnail_rename_input),
+                    CallbackQueryHandler(handle_callback),
+                ],
                 WAITING_TAG_INPUT: [
                     MessageHandler(filters.TEXT, handle_tag_input),
                     CallbackQueryHandler(handle_callback),
@@ -1386,17 +1835,23 @@ def main():
         logger.error(f"Erreur lors du démarrage du bot: {e}")
         raise
     finally:
-        # Nettoyage à la fin
+        # Nettoyage à la fin - seulement si l'application a été créée
         try:
-            loop = asyncio.get_event_loop()
-            if not loop.is_closed():
-                loop.run_until_complete(cleanup(application))
-        except RuntimeError:
-            # Si la boucle est fermée, créer une nouvelle boucle
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            loop.run_until_complete(cleanup(application))
-            loop.close()
+            # Vérifier que l'application existe et que asyncio est accessible
+            if 'application' in locals() and application is not None:
+                import asyncio as asyncio_module
+                try:
+                    loop = asyncio_module.get_event_loop()
+                    if not loop.is_closed():
+                        loop.run_until_complete(cleanup(application))
+                except RuntimeError:
+                    # Si la boucle est fermée, créer une nouvelle boucle
+                    loop = asyncio_module.new_event_loop()
+                    asyncio_module.set_event_loop(loop)
+                    loop.run_until_complete(cleanup(application))
+                    loop.close()
+        except Exception as cleanup_error:
+            logger.error(f"Erreur lors du nettoyage: {cleanup_error}")
 
 if __name__ == '__main__':
     main()

@@ -39,9 +39,9 @@ def get_global_scheduler_manager():
             import sys
             if 'bot' in sys.modules:
                 bot_module = sys.modules['bot']
-                if hasattr(bot_module, 'application') and hasattr(bot_module.application, 'scheduler_manager'):
+                if hasattr(bot_module, 'application') and bot_module.application.bot_data.get('scheduler_manager'):
                     logger.info("✅ Scheduler manager récupéré depuis le module bot")
-                    return bot_module.application.scheduler_manager
+                    return bot_module.application.bot_data['scheduler_manager']
         except Exception as e:
             logger.debug(f"Impossible de récupérer depuis le module bot: {e}")
         
@@ -214,8 +214,51 @@ async def send_scheduled_file(post: Dict[str, Any], app: Optional[Application] =
         logger.info(f"📍 Canal normalisé: '{original_channel}' → '{channel}'")
         logger.info(f"📍 Envoi vers {channel} - Type: {post_type}")
         
-        # Construire le clavier avec les boutons URL si présents
+        # Construire le clavier avec les réactions et boutons URL
         keyboard = None
+        keyboard_buttons = []
+        
+        # ✅ AJOUTER LES RÉACTIONS
+        if complete_post.get('reactions'):
+            logger.info("⭐ Construction des réactions...")
+            try:
+                reactions_data = complete_post['reactions']
+                logger.info(f"⭐ Données réactions brutes: {reactions_data}")
+                
+                if isinstance(reactions_data, str):
+                    try:
+                        reactions = json.loads(reactions_data)
+                        logger.info(f"⭐ Réactions parsées depuis JSON: {reactions}")
+                    except json.JSONDecodeError as json_err:
+                        logger.warning(f"Impossible de décoder les réactions comme JSON: {json_err}")
+                        reactions = []
+                else:
+                    reactions = reactions_data
+                    logger.info(f"⭐ Réactions utilisées directement: {reactions}")
+                    
+                if reactions:
+                    # Ajouter les réactions en ligne (4 par ligne max)
+                    current_row = []
+                    for reaction in reactions:
+                        current_row.append(InlineKeyboardButton(
+                            reaction,
+                            callback_data=f"reaction_{post_id}_{reaction}"
+                        ))
+                        # 4 réactions par ligne maximum
+                        if len(current_row) == 4:
+                            keyboard_buttons.append(current_row)
+                            current_row = []
+                    # Ajouter la dernière ligne si elle n'est pas vide
+                    if current_row:
+                        keyboard_buttons.append(current_row)
+                    
+                    logger.info(f"⭐ {len(reactions)} réaction(s) ajoutée(s)")
+                    
+            except Exception as reaction_error:
+                logger.error(f"Erreur lors de la conversion des réactions : {reaction_error}")
+                logger.exception("🔍 Traceback réactions:")
+        
+        # ✅ AJOUTER LES BOUTONS URL
         if complete_post.get('buttons'):
             logger.info("🔘 Construction des boutons...")
             try:
@@ -234,23 +277,29 @@ async def send_scheduled_file(post: Dict[str, Any], app: Optional[Application] =
                     logger.info(f"🔘 Boutons utilisés directement: {buttons}")
                     
                 if buttons:
-                    keyboard_buttons = []
                     for btn in buttons:
                         if isinstance(btn, dict) and 'text' in btn and 'url' in btn:
                             keyboard_buttons.append([InlineKeyboardButton(btn['text'], url=btn['url'])])
                             logger.info(f"🔘 Bouton ajouté: {btn['text']} → {btn['url']}")
-                    if keyboard_buttons:
-                        keyboard = InlineKeyboardMarkup(keyboard_buttons)
-                        logger.info(f"✅ {len(keyboard_buttons)} bouton(s) créé(s)")
+                    
             except Exception as btn_error:
                 logger.error(f"Erreur lors de la conversion des boutons : {btn_error}")
                 logger.exception("🔍 Traceback boutons:")
+        
+        # Créer le markup final si on a des éléments
+        reply_markup = None
+        if keyboard_buttons:
+            reply_markup = InlineKeyboardMarkup(keyboard_buttons)
+            total_reactions = len(complete_post.get('reactions', []))
+            total_buttons = len(complete_post.get('buttons', []))
+            logger.info(f"✅ Clavier créé - {total_reactions} réaction(s), {total_buttons} bouton(s)")
 
         # Envoyer le message selon son type
         logger.info(f"📤 === DÉBUT ENVOI MESSAGE ===")
         logger.info(f"📤 Type: {post_type}")
         logger.info(f"📤 Canal: {channel}")
         logger.info(f"📤 App bot: {app.bot}")
+        logger.info(f"📤 Reply markup: {reply_markup is not None}")
         
         sent_message = None
         try:
@@ -262,7 +311,7 @@ async def send_scheduled_file(post: Dict[str, Any], app: Optional[Application] =
                     chat_id=channel,
                     photo=content,
                     caption=caption,
-                    reply_markup=keyboard
+                    reply_markup=reply_markup
                 )
                 logger.info(f"📸 Photo envoyée avec succès")
                 
@@ -274,7 +323,7 @@ async def send_scheduled_file(post: Dict[str, Any], app: Optional[Application] =
                     chat_id=channel,
                     video=content,
                     caption=caption,
-                    reply_markup=keyboard
+                    reply_markup=reply_markup
                 )
                 logger.info(f"🎥 Vidéo envoyée avec succès")
                 
@@ -286,7 +335,7 @@ async def send_scheduled_file(post: Dict[str, Any], app: Optional[Application] =
                     chat_id=channel,
                     document=content,
                     caption=caption,
-                    reply_markup=keyboard
+                    reply_markup=reply_markup
                 )
                 logger.info(f"📄 Document envoyé avec succès")
                 
@@ -296,7 +345,7 @@ async def send_scheduled_file(post: Dict[str, Any], app: Optional[Application] =
                 sent_message = await app.bot.send_message(
                     chat_id=channel,
                     text=content,
-                    reply_markup=keyboard
+                    reply_markup=reply_markup
                 )
                 logger.info(f"📝 Texte envoyé avec succès")
                 

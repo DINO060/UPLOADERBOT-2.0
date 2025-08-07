@@ -297,6 +297,8 @@ async def handle_reaction_input(update, context):
             return WAITING_PUBLICATION_CONTENT
         # Mise à jour du post dans le contexte
         context.user_data['posts'][post_index]['reactions'] = reactions
+        logger.info(f"✅ Réactions ajoutées au post {post_index}: {reactions}")
+        logger.info(f"✅ Post complet après ajout: {context.user_data['posts'][post_index]}")
         # Construction du nouveau clavier
         keyboard = []
         current_row = []
@@ -429,7 +431,7 @@ async def handle_url_input(update, context):
         for btn in context.user_data['posts'][post_index]['buttons']:
             keyboard.append([InlineKeyboardButton(btn['text'], url=btn['url'])])
         keyboard.extend([
-            [InlineKeyboardButton("➕ Ajouter des réactions", callback_data=f"add_reactions_{post_index}")],
+            [InlineKeyboardButton("🗑️ Supprimer les réactions", callback_data=f"remove_reactions_{post_index}")],
             [InlineKeyboardButton("Supprimer les boutons URL", callback_data=f"remove_url_buttons_{post_index}")],
             [InlineKeyboardButton("✏️ Edit File", callback_data=f"edit_file_{post_index}")],
             [InlineKeyboardButton("❌ Supprimer", callback_data=f"delete_post_{post_index}")]

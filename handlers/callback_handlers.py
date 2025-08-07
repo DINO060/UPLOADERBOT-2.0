@@ -14,7 +14,7 @@ import time
 from utils.message_utils import MessageError, PostType
 from database.manager import DatabaseManager
 from utils.validators import InputValidator
-from conversation_states import MAIN_MENU, SCHEDULE_SELECT_CHANNEL, SCHEDULE_SEND, SETTINGS, WAITING_CHANNEL_SELECTION, WAITING_CHANNEL_INFO, WAITING_PUBLICATION_CONTENT, AUTO_DESTRUCTION
+from conversation_states import MAIN_MENU, SCHEDULE_SELECT_CHANNEL, SCHEDULE_SEND, SETTINGS, WAITING_CHANNEL_SELECTION, WAITING_CHANNEL_INFO, WAITING_PUBLICATION_CONTENT, AUTO_DESTRUCTION, WAITING_TAG_INPUT
 from utils.error_handler import handle_error
 from utils.scheduler import SchedulerManager
 from utils.scheduler_utils import send_scheduled_file
@@ -93,6 +93,50 @@ def normalize_channel_username(channel_username):
         return None
     return channel_username.lstrip('@') if isinstance(channel_username, str) else None
 
+def schedule_auto_destruction(context, chat_id, message_id, auto_destruction_time):
+    """Programme l'auto-destruction d'un message"""
+    try:
+        def delete_message_callback(context_job):
+            try:
+                # Utiliser le bot du job context
+                bot = context_job.context.bot
+                chat_id = context_job.context.chat_id
+                message_id = context_job.context.message_id
+                
+                # Supprimer le message
+                bot.delete_message(
+                    chat_id=chat_id,
+                    message_id=message_id
+                )
+                logger.info(f"🗑️ Message auto-supprimé après {auto_destruction_time}s")
+            except Exception as e:
+                logger.warning(f"Erreur suppression auto: {e}")
+        
+        # Créer un contexte pour le job
+        from datetime import timedelta
+        job_context = type('JobContext', (), {
+            'bot': context.bot,
+            'chat_id': chat_id,
+            'message_id': message_id
+        })()
+        
+        # Programmer la suppression
+        if hasattr(context, 'application') and hasattr(context.application, 'job_queue'):
+            context.application.job_queue.run_once(
+                delete_message_callback,
+                when=timedelta(seconds=auto_destruction_time),
+                name=f"auto_delete_{message_id}",
+                context=job_context
+            )
+            logger.info(f"⏰ Auto-destruction programmée dans {auto_destruction_time}s")
+            return True
+        else:
+            logger.warning("Job queue non disponible")
+            return False
+    except Exception as e:
+        logger.warning(f"Impossible de programmer l'auto-destruction: {e}")
+        return False
+
 # Définition des types pour les gestionnaires
 HandlerType = Callable[[Update, ContextTypes.DEFAULT_TYPE], Awaitable[None]]
 
@@ -126,16 +170,28 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     Raises:
         CallbackError: Si le callback est invalide ou non géré
     """
+    # Récupère le callback Telegram standard
     query = update.callback_query
     user_id = update.effective_user.id
     if not query or not query.data:
         logger.warning("Callback sans données reçu")
         return
 
+    # ✅ LOG DE DÉBOGAGE POUR LES CALLBACKS
+    logger.info(f"🔍 Callback reçu: {query.data}")
+    logger.info(f"🔍 Utilisateur: {user_id}")
+    logger.info(f"🔍 Chat: {query.message.chat_id if query.message else 'N/A'}")
+
     try:
         # Récupération du callback data complet
         callback_data = query.data
+        logger.info(f"🔍 Callback reçu: {callback_data}")
         await query.answer()
+        
+        # Log détaillé pour déboguer
+        logger.info(f"🔍 Callback complet: '{callback_data}'")
+        logger.info(f"🔍 Type: {type(callback_data)}")
+        logger.info(f"🔍 Longueur: {len(callback_data)}")
 
         # Cas spécifiques pour les callbacks
         if callback_data == "main_menu":
@@ -386,60 +442,128 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             return MAIN_MENU
             
         elif callback_data == "delete_all_posts":
-            # Supprimer tous les posts
+            # Supprimer tous les posts mais garder le canal sélectionné
             if 'posts' in context.user_data:
                 context.user_data['posts'] = []
+            # Ne pas supprimer le canal : context.user_data.pop('selected_channel', None)
+            
             await query.edit_message_text(
                 "🗑️ **Tous les posts supprimés**\n\n"
-                "Menu principal :",
-                reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("📝 Nouvelle publication", callback_data="create_publication")],
-                    [InlineKeyboardButton("📅 Publications planifiées", callback_data="planifier_post")],
-                    [InlineKeyboardButton("📊 Statistiques", callback_data="channel_stats")],
-                    [InlineKeyboardButton("⚙️ Paramètres", callback_data="settings")]
-                ])
+                "📤 Envoyez maintenant vos nouveaux fichiers :"
             )
-            return MAIN_MENU
+            return WAITING_PUBLICATION_CONTENT
             
         elif callback_data.startswith("rename_post_"):
             post_index = callback_data.replace("rename_post_", "")
             return await handle_rename_post(update, context, int(post_index))
             
+        elif callback_data.startswith("edit_file_"):
+            post_index = callback_data.replace("edit_file_", "")
+            return await show_edit_file_menu(update, context, int(post_index))
+            
         elif callback_data.startswith("add_thumbnail_"):
             post_index = callback_data.replace("add_thumbnail_", "")
             return await handle_add_thumbnail_to_post_callback(update, context, int(post_index))
             
-        elif callback_data.startswith("thumbnail_rename_"):
-            post_index = callback_data.replace("thumbnail_rename_", "")
-            return await handle_thumbnail_and_rename(update, context, int(post_index))
+        elif callback_data.startswith("add_thumb_"):
+            # Reproduit la logique du renambot: afficher MEDIA INFO puis attendre le nouveau nom
+            try:
+                parts = callback_data.split('_')
+                post_index = int(parts[-1])
+            except Exception:
+                await query.answer("❌ Erreur de format", show_alert=True)
+                return MAIN_MENU
+
+            # Valider le post
+            if 'posts' not in context.user_data or post_index >= len(context.user_data['posts']):
+                await query.answer("❌ Post introuvable", show_alert=True)
+                return MAIN_MENU
+
+            post = context.user_data['posts'][post_index]
+            file_name = post.get('filename', 'unnamed_file')
+            file_size = post.get('file_size', 0)
+            extension = os.path.splitext(file_name)[1] or "Unknown"
+            mime_type = post.get('mime_type', 'Unknown')
+            dc_id = post.get('dc_id', 'N/A')
+
+            # Vérifier qu'un thumbnail est défini pour le canal sélectionné
+            channel_username = post.get('channel', context.user_data.get('selected_channel', {}).get('username'))
+            clean_username = normalize_channel_username(channel_username)
+            db_manager = DatabaseManager()
+            thumbnail_data = db_manager.get_thumbnail(clean_username, update.effective_user.id)
+            if not thumbnail_data:
+                await query.answer("❌ Aucun thumbnail défini pour ce canal", show_alert=True)
+                return MAIN_MENU
+
+            info_card = (
+                "📁 <b>MEDIA INFO</b>\n\n"
+                f"📁 <b>FILE NAME:</b> <code>{file_name}</code>\n"
+                f"🧩 <b>EXTENSION:</b> <code>{extension}</code>\n"
+                f"📦 <b>FILE SIZE:</b> {file_size}\n"
+                f"🪄 <b>MIME TYPE:</b> {mime_type}\n"
+                f"🧭 <b>DC ID:</b> {dc_id}\n\n"
+                "<b>PLEASE ENTER THE NEW FILENAME WITH EXTENSION AND REPLY THIS MESSAGE.</b>"
+            )
+
+            await safe_edit_callback_message(query, info_card, parse_mode='HTML')
+
+            # Stocker l'action et l'index
+            context.user_data['awaiting_thumb_rename'] = True
+            context.user_data['current_post_index'] = post_index
+            return WAITING_THUMBNAIL_RENAME_INPUT
             
         elif callback_data.startswith("add_reactions_"):
             # Gestion de l'ajout de réactions
-            post_index = int(callback_data.split('_')[-1])
+            try:
+                post_index = int(callback_data.split('_')[-1])
+            except Exception as e:
+                logger.error(f"Erreur parsing add_reactions_: {callback_data} - {e}")
+                await query.answer("❌ Erreur de format")
+                return MAIN_MENU
             from .reaction_functions import add_reactions_to_post
             return await add_reactions_to_post(update, context)
             
         elif callback_data.startswith("add_url_button_"):
             # Gestion de l'ajout de boutons URL
-            post_index = int(callback_data.split('_')[-1])
+            try:
+                post_index = int(callback_data.split('_')[-1])
+            except Exception as e:
+                logger.error(f"Erreur parsing add_url_button_: {callback_data} - {e}")
+                await query.answer("❌ Erreur de format")
+                return MAIN_MENU
             from .reaction_functions import add_url_button_to_post
             return await add_url_button_to_post(update, context)
             
         elif callback_data.startswith("remove_reactions_"):
             # Gestion de la suppression de réactions
-            post_index = int(callback_data.split('_')[-1])
+            try:
+                post_index = int(callback_data.split('_')[-1])
+            except Exception as e:
+                logger.error(f"Erreur parsing remove_reactions_: {callback_data} - {e}")
+                await query.answer("❌ Erreur de format")
+                return MAIN_MENU
             from .reaction_functions import remove_reactions
             return await remove_reactions(update, context)
             
         elif callback_data.startswith("remove_url_buttons_"):
             # Gestion de la suppression de boutons URL
-            post_index = int(callback_data.split('_')[-1])
+            try:
+                post_index = int(callback_data.split('_')[-1])
+            except Exception as e:
+                logger.error(f"Erreur parsing remove_url_buttons_: {callback_data} - {e}")
+                await query.answer("❌ Erreur de format")
+                return MAIN_MENU
             from .reaction_functions import remove_url_buttons
             return await remove_url_buttons(update, context)
             
         elif callback_data.startswith("delete_post_"):
             # Gestion de la suppression de posts
-            post_index = int(callback_data.split('_')[-1])
+            try:
+                post_index = int(callback_data.split('_')[-1])
+            except Exception as e:
+                logger.error(f"Erreur parsing delete_post_: {callback_data} - {e}")
+                await query.answer("❌ Erreur de format")
+                return MAIN_MENU
             return await handle_delete_post(update, context, post_index)
             
         elif callback_data.startswith("edit_tag_"):
@@ -451,8 +575,63 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             # Gestion de l'affichage des posts planifiés
             return await show_scheduled_post(update, context)
 
+        # ✅ GESTIONNAIRE POUR LES RÉACTIONS DANS LE CANAL
+        elif callback_data.startswith("reaction_"):
+            try:
+                logger.info(f"🎯 GESTIONNAIRE RÉACTIONS ACTIVÉ - Callback: {callback_data}")
+                
+                # Format: reaction_{post_index}_{reaction}
+                parts = callback_data.split("_")
+                logger.info(f"🎯 Parts du callback: {parts}")
+                
+                if len(parts) >= 3:
+                    post_index = parts[1]
+                    reaction = "_".join(parts[2:])  # En cas de réaction avec underscore
+                    
+                    logger.info(f"⭐ Réaction cliquée: {reaction} pour le post {post_index}")
+                    logger.info(f"⭐ Utilisateur: {user_id}")
+                    logger.info(f"⭐ Chat: {query.message.chat_id if query.message else 'N/A'}")
+                    
+                    # Incrémenter le compteur de réactions
+                    if 'reaction_counts' not in context.bot_data:
+                        context.bot_data['reaction_counts'] = {}
+                        logger.info("📊 Initialisation du dictionnaire reaction_counts")
+                    
+                    reaction_key = f"{post_index}_{reaction}"
+                    current_count = context.bot_data['reaction_counts'].get(reaction_key, 0)
+                    context.bot_data['reaction_counts'][reaction_key] = current_count + 1
+                    
+                    # Afficher une notification à l'utilisateur
+                    notification_text = f"👍 {reaction} +1"
+                    await query.answer(notification_text)
+                    logger.info(f"✅ Notification envoyée: {notification_text}")
+                    
+                    logger.info(f"✅ Réaction {reaction} comptée pour le post {post_index} (total: {current_count + 1})")
+                    
+                else:
+                    logger.warning(f"Format de callback de réaction invalide: {callback_data}")
+                    logger.warning(f"Nombre de parts: {len(parts)}")
+                    await query.answer("❌ Erreur de format")
+                    
+            except Exception as e:
+                logger.error(f"Erreur lors du traitement de la réaction: {e}")
+                logger.exception("🔍 Traceback complet:")
+                await query.answer("❌ Erreur lors du traitement")
+
         # Si le callback n'est pas dans la liste des cas directement gérés
         logger.warning(f"Callback non géré directement : {callback_data}")
+        # Protection contre les callbacks malformés
+        if '_' in callback_data:
+            try:
+                # Essayer de parser le callback pour voir s'il contient un index
+                parts = callback_data.split('_')
+                if parts and parts[-1].isdigit():
+                    logger.warning(f"⚠️ Callback avec index numérique non reconnu: {callback_data}")
+                    await query.answer("⚠️ Action non implémentée")
+                    return MAIN_MENU
+            except Exception as e:
+                logger.error(f"❌ Erreur parsing callback non reconnu: {callback_data} - {e}")
+        
         await query.edit_message_text(
             f"⚠️ Action {callback_data} non implémentée. Retour au menu principal.",
             reply_markup=InlineKeyboardMarkup(
@@ -829,7 +1008,7 @@ async def handle_schedule_time(update: Update, context: ContextTypes.DEFAULT_TYP
                         cursor = conn.cursor()
                         cursor.execute(
                             """
-                            INSERT INTO posts (channel_id, type, content, caption, scheduled_time)
+                            INSERT INTO posts (channel_id, post_type, content, caption, scheduled_time)
                             VALUES (?, ?, ?, ?, ?)
                             """,
                             (channel_id, post['type'], post['content'],
@@ -1292,41 +1471,28 @@ async def handle_edit_tag(update: Update, context: ContextTypes.DEFAULT_TYPE, ch
     await query.answer()
     
     user_id = update.effective_user.id
-    db_manager = DatabaseManager()
-    
-    # Récupérer le tag actuel
-    current_tag = db_manager.get_channel_tag(channel_username, user_id)
     
     # Stocker le canal dans le contexte pour la prochaine étape
     context.user_data['editing_tag_for_channel'] = channel_username
+    context.user_data['awaiting_username'] = True
     
-    message_text = f"🏷️ **Hashtags pour @{channel_username}**\n\n"
-    
-    if current_tag:
-        message_text += f"**Hashtags actuels :** {current_tag}\n\n"
-    else:
-        message_text += "**Aucun hashtag défini pour ce canal**\n\n"
-    
-    message_text += (
-        "📝 **Instructions :**\n"
-        "• Envoyez vos hashtags séparés par des espaces\n"
-        "• Exemple : `#tech #python #dev`\n"
-        "• Les hashtags seront automatiquement ajoutés à vos publications\n"
-        "• Envoyez un point (.) pour supprimer tous les hashtags\n\n"
-        "👆 **Envoyez maintenant vos hashtags :**"
+    message_text = (
+        "Send me the text/tag to add to your files.\n\n"
+        "You can send:\n"
+        "• @username\n"
+        "• #hashtag\n"
+        "• [📢 @channel]\n"
+        "• 🔥 @fire\n"
+        "• Any text with emojis!"
     )
     
     keyboard = [
         [InlineKeyboardButton("❌ Annuler", callback_data=f"custom_channel_{channel_username}")]
     ]
     
-    # Utiliser la fonction sûre pour éditer le message
-    from utils.message_utils import safe_edit_message_text
-    await safe_edit_message_text(
-        query,
-        message_text,
-        reply_markup=InlineKeyboardMarkup(keyboard),
-        parse_mode="Markdown"
+    await query.edit_message_text(
+        text=message_text,
+        reply_markup=InlineKeyboardMarkup(keyboard)
     )
     
     return WAITING_TAG_INPUT
@@ -1866,7 +2032,7 @@ async def show_edit_file_menu(update: Update, context: ContextTypes.DEFAULT_TYPE
         keyboard = [
             [InlineKeyboardButton("✏️ Rename", callback_data=f"rename_post_{post_index}")],
             [InlineKeyboardButton("🖼️ Add Thumbnail", callback_data=f"add_thumbnail_{post_index}")],
-            [InlineKeyboardButton("🖼️ Add Thumbnail + Rename", callback_data=f"thumbnail_rename_{post_index}")]
+            [InlineKeyboardButton("🖼️ Add Thumbnail + Rename", callback_data=f"add_thumb_{post_index}")]
         ]
         
         from utils.message_utils import safe_edit_message_text
@@ -1896,13 +2062,13 @@ async def show_edit_file_menu(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 async def handle_rename_post(update: Update, context: ContextTypes.DEFAULT_TYPE, post_index: int) -> int:
     """Gère le renommage d'un post"""
-    query = update.callback_query
-    
     try:
+        query = update.callback_query
+        await query.answer()
+        
         # Vérifier que le post existe
         if 'posts' not in context.user_data or post_index >= len(context.user_data['posts']):
-            from utils.message_utils import safe_edit_message_text
-            await safe_edit_message_text(
+            await safe_edit_callback_message(
                 query,
                 "❌ Post introuvable.",
                 reply_markup=InlineKeyboardMarkup([[
@@ -1914,6 +2080,9 @@ async def handle_rename_post(update: Update, context: ContextTypes.DEFAULT_TYPE,
         # Stocker les variables nécessaires pour le gestionnaire existant
         context.user_data['waiting_for_rename'] = True
         context.user_data['current_post_index'] = post_index
+        
+        # Stocker l'ID du message actuel pour le supprimer plus tard
+        context.user_data['rename_prompt_message_id'] = query.message.message_id
         
         from utils.message_utils import safe_edit_message_text
         await safe_edit_message_text(
@@ -1945,6 +2114,9 @@ async def handle_add_thumbnail_to_post_callback(update: Update, context: Context
     query = update.callback_query
     
     try:
+        # Stocker l'ID du message actuel pour le supprimer plus tard
+        context.user_data['thumbnail_prompt_message_id'] = query.message.message_id
+        
         # Utiliser la nouvelle fonction centralisée pour tout le traitement
         logger.info(f"🎯 handle_add_thumbnail_to_post_callback appelé pour post {post_index + 1}")
         
@@ -1970,29 +2142,7 @@ async def handle_add_thumbnail_to_post_callback(update: Update, context: Context
         return MAIN_MENU
 
 
-async def handle_thumbnail_and_rename(update: Update, context: ContextTypes.DEFAULT_TYPE, post_index: int) -> int:
-    """Gère l'ajout de thumbnail + renommage"""
-    query = update.callback_query
-    
-    try:
-        # Utiliser la fonction existante de thumbnail_handler  
-        from .thumbnail_handler import handle_set_thumbnail_and_rename
-        
-        # Ne pas modifier query.data car c'est en lecture seule
-        # On va appeler directement la logique nécessaire
-        
-        return await handle_set_thumbnail_and_rename(update, context)
-        
-    except Exception as e:
-        logger.error(f"Erreur dans handle_thumbnail_and_rename: {e}")
-        await safe_edit_callback_message(
-            query,
-            "❌ Une erreur est survenue lors de l'ajout du thumbnail et renommage.",
-            reply_markup=InlineKeyboardMarkup([[
-                InlineKeyboardButton("↩️ Menu principal", callback_data="main_menu")
-            ]])
-        )
-        return MAIN_MENU
+
 
 
 async def handle_delete_post(update: Update, context: ContextTypes.DEFAULT_TYPE, post_index: int) -> int:
@@ -2006,12 +2156,9 @@ async def handle_delete_post(update: Update, context: ContextTypes.DEFAULT_TYPE,
             # Envoyer un nouveau message au lieu d'éditer (évite l'erreur "no text to edit")
             await context.bot.send_message(
                 chat_id=query.message.chat_id,
-                text="❌ Post introuvable.",
-                reply_markup=InlineKeyboardMarkup([[
-                    InlineKeyboardButton("↩️ Menu principal", callback_data="main_menu")
-                ]])
+                text="❌ Post introuvable."
             )
-            return MAIN_MENU
+            return WAITING_PUBLICATION_CONTENT
         
         # Récupérer les informations du post avant suppression
         deleted_post = context.user_data['posts'][post_index]
@@ -2020,46 +2167,28 @@ async def handle_delete_post(update: Update, context: ContextTypes.DEFAULT_TYPE,
         # Supprimer le post
         context.user_data['posts'].pop(post_index)
         
-        # Message de confirmation
+        # Message de confirmation simple
         remaining_posts = len(context.user_data.get('posts', []))
-        message = f"✅ **Post {post_index + 1} supprimé**\n\n"
+        message = f"✅ Post {post_index + 1} supprimé\n\n"
         message += f"📝 Type: {post_type}\n\n"
-        
-        if remaining_posts > 0:
-            message += f"Il vous reste **{remaining_posts}** post(s) en attente."
-            keyboard = [
-                [InlineKeyboardButton("📋 Aperçu général", callback_data="preview_all")],
-                [InlineKeyboardButton("🚀 Envoyer maintenant", callback_data="send_now_all")],
-                [InlineKeyboardButton("↩️ Menu principal", callback_data="main_menu")]
-            ]
-        else:
-            message += "Vous n'avez plus de posts en attente."
-            keyboard = [
-                [InlineKeyboardButton("📝 Créer une publication", callback_data="create_publication")],
-                [InlineKeyboardButton("↩️ Menu principal", callback_data="main_menu")]
-            ]
+        message += f"Il vous reste {remaining_posts} post(s) en attente"
         
         # Envoyer un nouveau message au lieu d'éditer pour éviter les erreurs
         await context.bot.send_message(
             chat_id=query.message.chat_id,
-            text=message,
-            reply_markup=InlineKeyboardMarkup(keyboard),
-            parse_mode='Markdown'
+            text=message
         )
         
-        return WAITING_PUBLICATION_CONTENT if remaining_posts > 0 else MAIN_MENU
+        return WAITING_PUBLICATION_CONTENT
         
     except Exception as e:
         logger.error(f"Erreur dans handle_delete_post: {e}")
         # Envoyer un nouveau message en cas d'erreur
         await context.bot.send_message(
             chat_id=query.message.chat_id,
-            text="❌ Erreur lors de la suppression du post.",
-            reply_markup=InlineKeyboardMarkup([[
-                InlineKeyboardButton("↩️ Menu principal", callback_data="main_menu")
-            ]])
+            text="❌ Erreur lors de la suppression du post."
         )
-        return MAIN_MENU
+        return WAITING_PUBLICATION_CONTENT
 
 async def schedule_send(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Interface de planification des messages"""
@@ -2243,10 +2372,51 @@ async def send_post_now(update, context, scheduled_post=None):
             if post_type in ["photo", "video", "document"]:
                 logger.info(f"📤 Envoi fichier {post_type}")
 
-                # Cas 1 : Thumbnail déjà appliqué (has_custom_thumbnail)
+                # Cas 1 : Thumbnail personnalisé déjà appliqué
                 if post.get('has_custom_thumbnail'):
-                    # Le fichier a déjà été traité avec thumbnail personnalisé
-                    logger.info(f"✅ Post {post_index + 1} déjà traité avec thumbnail personnalisé")
+                    logger.info(f"🎨 Envoi du post {post_index + 1} avec thumbnail personnalisé")
+                    
+                    # ✅ CONSTRUIRE LE CLAVIER AVEC RÉACTIONS ET BOUTONS
+                    keyboard = []
+                    
+                    # Ajouter les réactions
+                    reactions = post.get('reactions', [])
+                    if reactions:
+                        if isinstance(reactions, str):
+                            try:
+                                reactions = json.loads(reactions)
+                            except json.JSONDecodeError:
+                                reactions = []
+                        
+                        if reactions:
+                            current_row = []
+                            for reaction in reactions:
+                                current_row.append(InlineKeyboardButton(
+                                    reaction,
+                                    callback_data=f"reaction_{post_index}_{reaction}"
+                                ))
+                                if len(current_row) == 4:
+                                    keyboard.append(current_row)
+                                    current_row = []
+                            if current_row:
+                                keyboard.append(current_row)
+                    
+                    # Ajouter les boutons URL
+                    buttons = post.get('buttons', [])
+                    if buttons:
+                        if isinstance(buttons, str):
+                            try:
+                                buttons = json.loads(buttons)
+                            except json.JSONDecodeError:
+                                buttons = []
+                        
+                        for button in buttons:
+                            if isinstance(button, dict) and 'text' in button and 'url' in button:
+                                keyboard.append([InlineKeyboardButton(button['text'], url=button['url'])])
+                    
+                    reply_markup = InlineKeyboardMarkup(keyboard) if keyboard else None
+                    logger.info(f"🎯 Clavier créé pour post {post_index + 1}: {len(keyboard)} ligne(s)")
+                    
                     # Envoi direct avec le nouveau file_id
                     try:
                         sent_message = None
@@ -2254,19 +2424,22 @@ async def send_post_now(update, context, scheduled_post=None):
                             sent_message = await context.bot.send_photo(
                                 chat_id=channel,
                                 photo=content,
-                                caption=caption
+                                caption=caption,
+                                reply_markup=reply_markup
                             )
                         elif post_type == "video":
                             sent_message = await context.bot.send_video(
                                 chat_id=channel,
                                 video=content,
-                                caption=caption
+                                caption=caption,
+                                reply_markup=reply_markup
                             )
                         elif post_type == "document":
                             sent_message = await context.bot.send_document(
                                 chat_id=channel,
                                 document=content,
-                                caption=caption
+                                caption=caption,
+                                reply_markup=reply_markup
                             )
                         if sent_message:
                             logger.info(f"✅ Envoi réussi du post {post_index + 1} avec thumbnail personnalisé")
@@ -2274,31 +2447,7 @@ async def send_post_now(update, context, scheduled_post=None):
                             
                             # Programmer l'auto-destruction si configurée
                             if auto_destruction_time and auto_destruction_time > 0:
-                                try:
-                                    def delete_message_callback(context_job):
-                                        import asyncio
-                                        try:
-                                            loop = asyncio.new_event_loop()
-                                            asyncio.set_event_loop(loop)
-                                            loop.run_until_complete(
-                                                context.bot.delete_message(
-                                                    chat_id=channel,
-                                                    message_id=sent_message.message_id
-                                                )
-                                            )
-                                            loop.close()
-                                            logger.info(f"🗑️ Message auto-supprimé après {auto_destruction_time}s")
-                                        except Exception as e:
-                                            logger.warning(f"Erreur suppression auto: {e}")
-                                    
-                                    if hasattr(context, 'application') and hasattr(context.application, 'job_queue'):
-                                        context.application.job_queue.run_once(
-                                            delete_message_callback,
-                                            when=auto_destruction_time,
-                                            name=f"auto_delete_{sent_message.message_id}"
-                                        )
-                                except Exception as e:
-                                    logger.warning(f"Impossible de programmer l'auto-destruction: {e}")
+                                schedule_auto_destruction(context, channel, sent_message.message_id, auto_destruction_time)
                             
                     except Exception as e:
                         logger.error(f"❌ Erreur envoi du post avec thumbnail personnalisé: {e}")
@@ -2324,25 +2473,70 @@ async def send_post_now(update, context, scheduled_post=None):
                 # Cas 3 : Envoi simple (pas de thumbnail)
                 else:
                     logger.info(f"🚀 Envoi simple du post {post_index + 1} sans thumbnail personnalisé")
+                    
+                    # ✅ CONSTRUIRE LE CLAVIER AVEC RÉACTIONS ET BOUTONS
+                    keyboard = []
+                    
+                    # Ajouter les réactions
+                    reactions = post.get('reactions', [])
+                    if reactions:
+                        if isinstance(reactions, str):
+                            try:
+                                reactions = json.loads(reactions)
+                            except json.JSONDecodeError:
+                                reactions = []
+                        
+                        if reactions:
+                            current_row = []
+                            for reaction in reactions:
+                                current_row.append(InlineKeyboardButton(
+                                    reaction,
+                                    callback_data=f"reaction_{post_index}_{reaction}"
+                                ))
+                                if len(current_row) == 4:
+                                    keyboard.append(current_row)
+                                    current_row = []
+                            if current_row:
+                                keyboard.append(current_row)
+                    
+                    # Ajouter les boutons URL
+                    buttons = post.get('buttons', [])
+                    if buttons:
+                        if isinstance(buttons, str):
+                            try:
+                                buttons = json.loads(buttons)
+                            except json.JSONDecodeError:
+                                buttons = []
+                        
+                        for button in buttons:
+                            if isinstance(button, dict) and 'text' in button and 'url' in button:
+                                keyboard.append([InlineKeyboardButton(button['text'], url=button['url'])])
+                    
+                    reply_markup = InlineKeyboardMarkup(keyboard) if keyboard else None
+                    logger.info(f"🎯 Clavier créé pour post {post_index + 1}: {len(keyboard)} ligne(s)")
+                    
                     try:
                         sent_message = None
                         if post_type == "photo":
                             sent_message = await context.bot.send_photo(
                                 chat_id=channel,
                                 photo=content,
-                                caption=caption
+                                caption=caption,
+                                reply_markup=reply_markup
                             )
                         elif post_type == "video":
                             sent_message = await context.bot.send_video(
                                 chat_id=channel,
                                 video=content,
-                                caption=caption
+                                caption=caption,
+                                reply_markup=reply_markup
                             )
                         elif post_type == "document":
                             sent_message = await context.bot.send_document(
                                 chat_id=channel,
                                 document=content,
-                                caption=caption
+                                caption=caption,
+                                reply_markup=reply_markup
                             )
                         if sent_message:
                             logger.info(f"✅ Envoi réussi du post {post_index + 1} sans thumbnail personnalisé")
@@ -2350,31 +2544,7 @@ async def send_post_now(update, context, scheduled_post=None):
                             
                             # Programmer l'auto-destruction si configurée
                             if auto_destruction_time and auto_destruction_time > 0:
-                                try:
-                                    def delete_message_callback(context_job):
-                                        import asyncio
-                                        try:
-                                            loop = asyncio.new_event_loop()
-                                            asyncio.set_event_loop(loop)
-                                            loop.run_until_complete(
-                                                context.bot.delete_message(
-                                                    chat_id=channel,
-                                                    message_id=sent_message.message_id
-                                                )
-                                            )
-                                            loop.close()
-                                            logger.info(f"🗑️ Message auto-supprimé après {auto_destruction_time}s")
-                                        except Exception as e:
-                                            logger.warning(f"Erreur suppression auto: {e}")
-                                    
-                                    if hasattr(context, 'application') and hasattr(context.application, 'job_queue'):
-                                        context.application.job_queue.run_once(
-                                            delete_message_callback,
-                                            when=auto_destruction_time,
-                                            name=f"auto_delete_{sent_message.message_id}"
-                                        )
-                                except Exception as e:
-                                    logger.warning(f"Impossible de programmer l'auto-destruction: {e}")
+                                schedule_auto_destruction(context, channel, sent_message.message_id, auto_destruction_time)
                             
                     except Exception as e:
                         logger.error(f"❌ Erreur envoi du post sans thumbnail: {e}")
@@ -2393,31 +2563,7 @@ async def send_post_now(update, context, scheduled_post=None):
                         
                         # Programmer l'auto-destruction si configurée
                         if auto_destruction_time and auto_destruction_time > 0:
-                            try:
-                                def delete_message_callback(context_job):
-                                    import asyncio
-                                    try:
-                                        loop = asyncio.new_event_loop()
-                                        asyncio.set_event_loop(loop)
-                                        loop.run_until_complete(
-                                            context.bot.delete_message(
-                                                chat_id=channel,
-                                                message_id=sent_message.message_id
-                                            )
-                                        )
-                                        loop.close()
-                                        logger.info(f"🗑️ Message auto-supprimé après {auto_destruction_time}s")
-                                    except Exception as e:
-                                        logger.warning(f"Erreur suppression auto: {e}")
-                                
-                                if hasattr(context, 'application') and hasattr(context.application, 'job_queue'):
-                                    context.application.job_queue.run_once(
-                                        delete_message_callback,
-                                        when=auto_destruction_time,
-                                        name=f"auto_delete_{sent_message.message_id}"
-                                    )
-                            except Exception as e:
-                                logger.warning(f"Impossible de programmer l'auto-destruction: {e}")
+                            schedule_auto_destruction(context, channel, sent_message.message_id, auto_destruction_time)
                                 
                 except Exception as e:
                     logger.error(f"❌ Erreur envoi du post texte: {e}")
@@ -2557,31 +2703,47 @@ async def handle_send_scheduled_post(update: Update, context: ContextTypes.DEFAU
         logger.info(f"📤 Envoi vers {channel} - Type: {post_type}")
         
         if post_type == "photo":
+            reactions = post.get("reactions", [])
+            from mon_bot_telegram.handlers.reaction_functions import create_reactions_keyboard
+            reply_markup = create_reactions_keyboard(reactions) if reactions else None
+
             sent_message = await context.bot.send_photo(
                 chat_id=channel,
                 photo=content,
                 caption=caption,
-                reply_markup=keyboard_markup
+                reply_markup=reply_markup
             )
         elif post_type == "video":
+            reactions = post.get("reactions", [])
+            from mon_bot_telegram.handlers.reaction_functions import create_reactions_keyboard
+            reply_markup = create_reactions_keyboard(reactions) if reactions else None
+
             sent_message = await context.bot.send_video(
                 chat_id=channel,
                 video=content,
                 caption=caption,
-                reply_markup=keyboard_markup
+                reply_markup=reply_markup
             )
         elif post_type == "document":
+            reactions = post.get("reactions", [])
+            from mon_bot_telegram.handlers.reaction_functions import create_reactions_keyboard
+            reply_markup = create_reactions_keyboard(reactions) if reactions else None
+
             sent_message = await context.bot.send_document(
                 chat_id=channel,
                 document=content,
                 caption=caption,
-                reply_markup=keyboard_markup
+                reply_markup=reply_markup
             )
         elif post_type == "text":
+            reactions = post.get("reactions", [])
+            from mon_bot_telegram.handlers.reaction_functions import create_reactions_keyboard
+            reply_markup = create_reactions_keyboard(reactions) if reactions else None
+
             sent_message = await context.bot.send_message(
                 chat_id=channel,
                 text=content,
-                reply_markup=keyboard_markup
+                reply_markup=reply_markup
             )
         else:
             raise ValueError(f"Type de post non supporté: {post_type}")
@@ -2684,29 +2846,106 @@ async def handle_send_normal_posts(update: Update, context: ContextTypes.DEFAULT
                 
                 logger.info(f"📤 Envoi du post {post_index + 1}/{len(posts)} - Type: {post_type}")
                 
+                # ✅ CONSTRUIRE LE CLAVIER AVEC RÉACTIONS ET BOUTONS
+                keyboard = []
+                
+                # DEBUG: Afficher le contenu complet du post
+                logger.info(f"🔍 DEBUG POST {post_index + 1}:")
+                logger.info(f"   📝 Type: {post.get('type')}")
+                logger.info(f"   📄 Content: {str(post.get('content'))[:50]}...")
+                logger.info(f"   📝 Caption: {post.get('caption', 'None')}")
+                logger.info(f"   ⭐ Réactions: {post.get('reactions', 'None')}")
+                logger.info(f"   🔘 Boutons: {post.get('buttons', 'None')}")
+                logger.info(f"   🔍 Type réactions: {type(post.get('reactions'))}")
+                logger.info(f"   🔍 Type boutons: {type(post.get('buttons'))}")
+                
+                # Ajouter les réactions en ligne
+                reactions = post.get('reactions', [])
+                logger.info(f"🎯 Traitement réactions pour post {post_index + 1}: {reactions}")
+                
+                if reactions:
+                    # Si c'est une string JSON, la parser
+                    if isinstance(reactions, str):
+                        try:
+                            reactions = json.loads(reactions)
+                            logger.info(f"✅ Réactions parsées depuis JSON: {reactions}")
+                        except json.JSONDecodeError:
+                            logger.warning(f"❌ Impossible de parser les réactions JSON: {reactions}")
+                            reactions = []
+                    
+                    if reactions:
+                        current_row = []
+                        for reaction in reactions:
+                            logger.info(f"⭐ Ajout réaction: {reaction}")
+                            current_row.append(InlineKeyboardButton(
+                                reaction,
+                                callback_data=f"reaction_{post_index}_{reaction}"
+                            ))
+                            # 4 réactions par ligne maximum
+                            if len(current_row) == 4:
+                                keyboard.append(current_row)
+                                current_row = []
+                        # Ajouter la dernière ligne si elle n'est pas vide
+                        if current_row:
+                            keyboard.append(current_row)
+                
+                # Ajouter les boutons URL
+                buttons = post.get('buttons', [])
+                logger.info(f"🎯 Traitement boutons pour post {post_index + 1}: {buttons}")
+                
+                if buttons:
+                    # Si c'est une string JSON, la parser
+                    if isinstance(buttons, str):
+                        try:
+                            buttons = json.loads(buttons)
+                            logger.info(f"✅ Boutons parsés depuis JSON: {buttons}")
+                        except json.JSONDecodeError:
+                            logger.warning(f"❌ Impossible de parser les boutons JSON: {buttons}")
+                            buttons = []
+                    
+                    for button in buttons:
+                        if isinstance(button, dict) and 'text' in button and 'url' in button:
+                            logger.info(f"🔘 Ajout bouton: {button['text']} → {button['url']}")
+                            keyboard.append([InlineKeyboardButton(button['text'], url=button['url'])])
+                
+                # Créer le markup si on a des boutons/réactions
+                reply_markup = InlineKeyboardMarkup(keyboard) if keyboard else None
+                
+                logger.info(f"🎯 Post {post_index + 1} - Réactions: {len(reactions) if isinstance(reactions, list) else 0}, Boutons: {len(buttons) if isinstance(buttons, list) else 0}")
+                logger.info(f"🎯 Clavier créé: {len(keyboard)} ligne(s) de boutons")
+                logger.info(f"🎯 Reply markup créé: {reply_markup is not None}")
+                if reply_markup:
+                    logger.info(f"🎯 Contenu du reply_markup: {reply_markup.inline_keyboard}")
+                
                 sent_message = None
+                logger.info(f"📤 Envoi vers {channel} avec reply_markup: {reply_markup is not None}")
+                
                 if post_type == "photo":
                     sent_message = await context.bot.send_photo(
                         chat_id=channel,
                         photo=content,
-                        caption=caption
+                        caption=caption,
+                        reply_markup=reply_markup
                     )
                 elif post_type == "video":
                     sent_message = await context.bot.send_video(
                         chat_id=channel,
                         video=content,
-                        caption=caption
+                        caption=caption,
+                        reply_markup=reply_markup
                     )
                 elif post_type == "document":
                     sent_message = await context.bot.send_document(
                         chat_id=channel,
                         document=content,
-                        caption=caption
+                        caption=caption,
+                        reply_markup=reply_markup
                     )
                 elif post_type == "text":
                     sent_message = await context.bot.send_message(
                         chat_id=channel,
-                        text=content
+                        text=content,
+                        reply_markup=reply_markup
                     )
                 else:
                     logger.warning(f"Type de post non supporté: {post_type}")
@@ -2718,32 +2957,7 @@ async def handle_send_normal_posts(update: Update, context: ContextTypes.DEFAULT
                     
                     # Programmer l'auto-destruction si configurée
                     if auto_destruction_time > 0:
-                        try:
-                            def delete_message_callback(context_job):
-                                import asyncio
-                                try:
-                                    loop = asyncio.new_event_loop()
-                                    asyncio.set_event_loop(loop)
-                                    loop.run_until_complete(
-                                        context.bot.delete_message(
-                                            chat_id=channel,
-                                            message_id=sent_message.message_id
-                                        )
-                                    )
-                                    loop.close()
-                                    logger.info(f"🗑️ Message auto-supprimé après {auto_destruction_time}s")
-                                except Exception as e:
-                                    logger.warning(f"Erreur suppression auto: {e}")
-                            
-                            if hasattr(context, 'application') and hasattr(context.application, 'job_queue'):
-                                context.application.job_queue.run_once(
-                                    delete_message_callback,
-                                    when=auto_destruction_time,
-                                    name=f"auto_delete_{sent_message.message_id}"
-                                )
-                                logger.info(f"⏰ Auto-destruction programmée dans {auto_destruction_time}s")
-                        except Exception as e:
-                            logger.warning(f"Impossible de programmer l'auto-destruction: {e}")
+                        schedule_auto_destruction(context, channel, sent_message.message_id, auto_destruction_time)
                 
             except Exception as e:
                 logger.error(f"Erreur envoi post {post_index + 1}: {e}")
@@ -3121,19 +3335,106 @@ async def process_thumbnail_and_upload(update: Update, context: ContextTypes.DEF
                 
                 logger.info(f"✅ Post {post_index + 1} mis à jour avec thumbnail personnalisé")
                 
-                # Message de succès
-                await safe_edit_callback_message(
-                    query,
-                    f"✅ **Thumbnail appliqué avec succès !**\n\n"
-                    f"📝 Post {post_index + 1} ({post_type})\n"
-                    f"🖼️ Thumbnail personnalisé pour @{clean_username}\n\n"
-                    f"Le fichier est maintenant prêt à être envoyé avec son thumbnail personnalisé.",
-                    reply_markup=InlineKeyboardMarkup([[
-                        InlineKeyboardButton("🚀 Envoyer maintenant", callback_data="send_now"),
-                        InlineKeyboardButton("↩️ Menu principal", callback_data="main_menu")
-                    ]]),
-                    parse_mode="Markdown"
-                )
+                # Supprimer les messages précédents (comme pour le bouton Rename)
+                try:
+                    # Supprimer le message de demande de thumbnail si possible
+                    if 'thumbnail_prompt_message_id' in context.user_data:
+                        try:
+                            await context.bot.delete_message(
+                                chat_id=update.effective_chat.id,
+                                message_id=context.user_data['thumbnail_prompt_message_id']
+                            )
+                        except Exception as e:
+                            logger.warning(f"Impossible de supprimer le message de demande: {e}")
+                        context.user_data.pop('thumbnail_prompt_message_id', None)
+                    
+                    # Supprimer le message du fichier original (si on a son ID)
+                    if 'original_file_message_id' in context.user_data:
+                        try:
+                            await context.bot.delete_message(
+                                chat_id=update.effective_chat.id,
+                                message_id=context.user_data['original_file_message_id']
+                            )
+                        except Exception as e:
+                            logger.warning(f"Impossible de supprimer le fichier original: {e}")
+                        context.user_data.pop('original_file_message_id', None)
+                    
+                except Exception as e:
+                    logger.warning(f"Erreur lors de la suppression des messages: {e}")
+                
+                # Envoyer le fichier avec le thumbnail et les boutons
+                try:
+                    # Créer les boutons comme dans les autres fonctions
+                    buttons = []
+                    
+                    # Bouton pour ajouter des réactions
+                    if not post.get('reactions'):
+                        buttons.append([InlineKeyboardButton("✨ Ajouter des réactions", callback_data=f"add_reactions_{post_index}")])
+                    else:
+                        buttons.append([InlineKeyboardButton("🗑️ Supprimer les réactions", callback_data=f"remove_reactions_{post_index}")])
+                    
+                    # Bouton pour ajouter un bouton URL
+                    if not post.get('buttons'):
+                        buttons.append([InlineKeyboardButton("🔗 Ajouter un bouton URL", callback_data=f"add_url_button_{post_index}")])
+                    else:
+                        buttons.append([InlineKeyboardButton("🗑️ Supprimer le bouton URL", callback_data=f"remove_url_{post_index}")])
+                    
+                    # Boutons d'édition et suppression
+                    buttons.append([
+                        InlineKeyboardButton("✏️ Edit File", callback_data=f"edit_file_{post_index}"),
+                        InlineKeyboardButton("❌ Supprimer", callback_data=f"delete_post_{post_index}")
+                    ])
+                    
+
+                    
+                    reply_markup = InlineKeyboardMarkup(buttons)
+                    
+                    # Envoyer le fichier avec le nouveau thumbnail
+                    if post_type == 'photo':
+                        await context.bot.send_photo(
+                            chat_id=update.effective_user.id,
+                            photo=new_file_id,
+                            caption=caption,
+                            reply_markup=reply_markup
+                        )
+                    elif post_type == 'video':
+                        await context.bot.send_video(
+                            chat_id=update.effective_user.id,
+                            video=new_file_id,
+                            caption=caption,
+                            reply_markup=reply_markup
+                        )
+                    elif post_type == 'document':
+                        await context.bot.send_document(
+                            chat_id=update.effective_user.id,
+                            document=new_file_id,
+                            caption=caption,
+                            reply_markup=reply_markup
+                        )
+                    elif post_type == 'text':
+                        await context.bot.send_message(
+                            chat_id=update.effective_user.id,
+                            text=caption,
+                            reply_markup=reply_markup
+                        )
+                    
+                    logger.info(f"✅ Fichier avec thumbnail envoyé avec boutons")
+                    
+                except Exception as e:
+                    logger.error(f"Erreur lors de l'envoi du fichier avec thumbnail: {e}")
+                    # En cas d'erreur, envoyer un message de succès simple
+                    await safe_edit_callback_message(
+                        query,
+                        f"✅ **Thumbnail appliqué avec succès !**\n\n"
+                        f"📝 Post {post_index + 1} ({post_type})\n"
+                        f"🖼️ Thumbnail personnalisé pour @{clean_username}\n\n"
+                        f"Le fichier est maintenant prêt à être envoyé avec son thumbnail personnalisé.",
+                        reply_markup=InlineKeyboardMarkup([[
+                            InlineKeyboardButton("🚀 Envoyer maintenant", callback_data="send_now"),
+                            InlineKeyboardButton("↩️ Menu principal", callback_data="main_menu")
+                        ]]),
+                        parse_mode="Markdown"
+                    )
                 
                 return True
             else:
@@ -3169,3 +3470,4 @@ async def process_thumbnail_and_upload(update: Update, context: ContextTypes.DEF
                 logger.warning(f"⚠️ Erreur nettoyage: {cleanup_error}")
         
         # Note: Les fichiers local_path ne sont PAS supprimés car ils sont permanents
+
