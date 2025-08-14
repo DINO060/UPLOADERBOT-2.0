@@ -78,6 +78,7 @@ from pyrogram import Client
 from handlers.callback_handlers import handle_callback, send_post_now
 from handlers.message_handlers import handle_text, handle_media, handle_channel_info, handle_post_content, handle_tag_input
 from handlers.media_handler import send_file_smart
+from i18n import SUPPORTED, set_user_lang, get_user_lang, t
 
 load_dotenv()
 
@@ -2142,12 +2143,54 @@ def main():
         application.add_handler(CommandHandler("delfsub", del_fsub, filters=filters.User(ADMIN_IDS)))
         application.add_handler(CommandHandler("channels", list_fsubs, filters=filters.User(ADMIN_IDS)))
         application.add_handler(CommandHandler("status", status_cmd))
+        
+        # --- Enregistrement des handlers de langue ---
+        application.add_handler(CommandHandler("language", cmd_language))
+        application.add_handler(CallbackQueryHandler(cb_set_language, pattern=f"^{LANG_CB_PREFIX}"))
 
         # Wrapper /start avec vérification f-sub
         async def start_guarded(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if not await require_fsub_or_prompt(update, context):
                 return ConversationHandler.END
             return await command_handlers.start(update, context)
+
+        # Language handlers
+        LANG_CB_PREFIX = "lang:"  # ex: "lang:fr"
+
+        async def cmd_language(update: Update, context: ContextTypes.DEFAULT_TYPE):
+            """Handle /language command to change bot language"""
+            user = update.effective_user
+            current_lang = get_user_lang(user.id, user.language_code)
+            
+            buttons = [
+                [InlineKeyboardButton(f"{meta['flag']} {meta['name']}", callback_data=LANG_CB_PREFIX + code)]
+                for code, meta in SUPPORTED.items()
+            ]
+            
+            await update.effective_message.reply_text(
+                t(current_lang, "buttons.choose_language"),
+                reply_markup=InlineKeyboardMarkup(buttons)
+            )
+
+        async def cb_set_language(update: Update, context: ContextTypes.DEFAULT_TYPE):
+            """Handle language selection callback"""
+            query = update.callback_query
+            await query.answer()
+            user = update.effective_user
+            
+            data = query.data or ""
+            if not data.startswith(LANG_CB_PREFIX):
+                return
+            
+            lang = data.split(":", 1)[1]
+            try:
+                set_user_lang(user.id, lang)
+                await query.edit_message_text(
+                    t(lang, "lang.saved", lang_flag=SUPPORTED[lang]["flag"], lang_name=SUPPORTED[lang]["name"])
+                )
+            except ValueError:
+                # langue non supportée
+                await query.edit_message_text("❌ Unsupported language.")
 
         # Wrapper /create avec vérification f-sub
         async def create_guarded(update: Update, context: ContextTypes.DEFAULT_TYPE):

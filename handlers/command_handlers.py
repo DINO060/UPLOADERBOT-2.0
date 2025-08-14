@@ -8,6 +8,7 @@ from database.manager import DatabaseManager
 from utils.error_handler import handle_error
 from conversation_states import MAIN_MENU, POST_CONTENT, SCHEDULE_SEND, SETTINGS, WAITING_THUMBNAIL, WAITING_CHANNEL_INFO
 from database.channel_repo import list_user_channels
+from i18n import get_user_lang, t
 
 logger = logging.getLogger('TelegramBot')
 
@@ -56,9 +57,9 @@ class CommandHandlers:
         """Handles the /start command"""
         user = update.effective_user
         user_id = user.id
-
-        # Message d'accueil
-        welcome_message = WELCOME_TEXT
+        
+        # Get user language preference
+        lang = get_user_lang(user.id, user.language_code)
 
         # Initialisation de la structure de données utilisateur si nécessaire
         if 'posts' not in context.user_data:
@@ -76,7 +77,7 @@ class CommandHandlers:
         reply_markup = InlineKeyboardMarkup(keyboard)
 
         # Envoyer le message avec le clavier
-        await update.message.reply_text(welcome_message, reply_markup=reply_markup)
+        await update.message.reply_text(t(lang, "start.welcome"), reply_markup=reply_markup)
 
         # Save user timezone if not set
         timezone = self.db_manager.get_user_timezone(user_id)
