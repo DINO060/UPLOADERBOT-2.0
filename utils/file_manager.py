@@ -10,11 +10,11 @@ from .validators import InputValidator
 logger = logging.getLogger('TelegramBot')
 
 class ValidationError(Exception):
-    """Exception pour les erreurs de validation"""
+    """Exception for validation errors"""
     pass
 
 class FileManager:
-    """Gestionnaire de fichiers pour le bot"""
+    """File manager for the bot"""
     
     def __init__(self, base_path: str = "downloads"):
         """
@@ -27,11 +27,11 @@ class FileManager:
         self._ensure_directories()
     
     def _ensure_directories(self) -> None:
-        """Crée les répertoires nécessaires s'ils n'existent pas"""
+        """Creates necessary directories if they don't exist"""
         try:
             self.base_path.mkdir(parents=True, exist_ok=True)
         except Exception as e:
-            logger.error(f"Erreur lors de la création des répertoires: {e}")
+            logger.error(f"Error creating directories: {e}")
             raise
     
     def get_file_path(self, file_id: str, file_type: str) -> Path:
@@ -75,7 +75,7 @@ class FileManager:
             if file_size is not None:
                 max_size = 100 * 1024 * 1024  # 100MB par défaut
                 if not InputValidator.validate_file_size(str(file_size), max_size):
-                    raise ValidationError(f"Taille de fichier invalide: {file_size} octets")
+                    raise ValidationError(f"Invalid file size: {file_size} bytes")
             
             # Génère le chemin de destination
             dest_path = self.get_file_path(file_id, file_type)
@@ -88,11 +88,11 @@ class FileManager:
                 with open(dest_path, 'wb') as f:
                     f.write(file)
             
-            logger.info(f"Fichier sauvegardé: {dest_path}")
+            logger.info(f"File saved: {dest_path}")
             return dest_path
             
         except Exception as e:
-            logger.error(f"Erreur lors de la sauvegarde du fichier: {e}")
+            logger.error(f"Error saving file: {e}")
             raise
     
     def delete_file(self, file_path: Union[str, Path]) -> bool:
@@ -109,11 +109,11 @@ class FileManager:
             file_path = Path(file_path)
             if file_path.exists():
                 file_path.unlink()
-                logger.info(f"Fichier supprimé: {file_path}")
+                logger.info(f"File deleted: {file_path}")
                 return True
             return False
         except Exception as e:
-            logger.error(f"Erreur lors de la suppression du fichier: {e}")
+            logger.error(f"Error deleting file: {e}")
             return False
     
     def cleanup_old_files(self, max_age_days: int = 7) -> int:
@@ -141,11 +141,11 @@ class FileManager:
                     if self.delete_file(file_path):
                         deleted_count += 1
             
-            logger.info(f"{deleted_count} fichiers supprimés")
+            logger.info(f"{deleted_count} files deleted")
             return deleted_count
             
         except Exception as e:
-            logger.error(f"Erreur lors du nettoyage des fichiers: {e}")
+            logger.error(f"Error cleaning files: {e}")
             return 0
     
     def get_file_info(self, file_path: Union[str, Path]) -> dict:
@@ -172,5 +172,5 @@ class FileManager:
                 "type": file_path.suffix[1:] if file_path.suffix else "unknown"
             }
         except Exception as e:
-            logger.error(f"Erreur lors de la récupération des informations du fichier: {e}")
+            logger.error(f"Error retrieving file information: {e}")
             return {} 

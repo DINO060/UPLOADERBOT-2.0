@@ -35,11 +35,11 @@ class TimeUtils:
                 raise ValueError("Format d'heure invalide")
 
             if not (0 <= hour <= 23 and 0 <= minute <= 59):
-                raise ValueError("Heure hors limites")
+                raise ValueError("Time out of bounds")
 
             return hour, minute
         except ValueError as e:
-            raise ValueError(f"Erreur de parsing de l'heure: {e}")
+            raise ValueError(f"Time parsing error: {e}")
 
     @staticmethod
     def validate_scheduled_time(scheduled_time: datetime) -> bool:
@@ -105,9 +105,9 @@ class RetryUtils:
 class ErrorMessages:
     @staticmethod
     def get_time_format_error() -> str:
-        """Retourne un message d'erreur détaillé pour un format d'heure invalide."""
+        """Returns a detailed error message for an invalid time format."""
         return (
-            "❌ Format d'heure invalide. Veuillez utiliser l'un des formats suivants:\n"
+            "❌ Invalid time format. Please use one of the following formats:\n"
             "• '15:30' ou '1530'\n"
             "• '6' (06:00)\n"
             "• '5 3' (05:03)"
@@ -117,18 +117,18 @@ class ErrorMessages:
 class TimezoneManager:
     @staticmethod
     def format_time_for_user(dt: datetime, timezone: str) -> str:
-        """Formate une date pour l'affichage utilisateur."""
+        """Formats a date for user display."""
         local_tz = pytz.timezone(timezone)
         local_dt = dt.astimezone(local_tz)
-        return local_dt.strftime("%d/%m/%Y à %H:%M")
+        return local_dt.strftime("%d/%m/%Y at %H:%M")
 
     @staticmethod
     def validate_future_time(dt: datetime, timezone: str) -> Tuple[bool, str]:
-        """Vérifie si une date est dans le futur."""
+        """Checks if a date is in the future."""
         local_tz = pytz.timezone(timezone)
         now = datetime.now(local_tz)
         if dt <= now:
-            return False, "Cette heure est déjà passée"
+            return False, "This time has already passed"
         return True, ""
 
 
@@ -136,9 +136,9 @@ class MessageTemplates:
     @staticmethod
     def get_time_selection_message() -> str:
         return (
-            "📅 Choisissez la nouvelle date pour votre publication :\n\n"
-            "1️⃣ Sélectionnez le jour (Aujourd'hui ou Demain)\n"
-            "2️⃣ Ensuite, envoyez-moi l'heure au format :\n"
+            "📅 Choose the new date for your publication:\n\n"
+            "1️⃣ Select the day (Today or Tomorrow)\n"
+            "2️⃣ Then, send me the time in format:\n"
             "   • '15:30' ou '1530' (24h)\n"
             "   • '6' (06:00)\n"
             "   • '5 3' (05:03)\n\n"
@@ -147,7 +147,7 @@ class MessageTemplates:
     @staticmethod
     def get_invalid_time_message() -> str:
         return (
-            "❌ Format d'heure invalide. Utilisez un format comme :\n"
+            "❌ Invalid time format. Use a format like:\n"
             "• '15:30' ou '1530' (24h)\n"
             "• '6' (06:00)\n"
             "• '5 3' (05:03)"
@@ -183,5 +183,5 @@ class PostEditingState:
         if not self.post_id:
             return False, "Publication introuvable"
         if not self.schedule_day:
-            return False, "Jour non sélectionné"
+            return False, "Day not selected"
         return True, ""

@@ -1,7 +1,6 @@
 """
-Module de gestion de la base de données.
+Database module exports.
 """
 from .manager import DatabaseManager
-from .models import Base
 
-__all__ = ['DatabaseManager', 'Base'] 
+__all__ = ['DatabaseManager']

@@ -1,5 +1,5 @@
 """
-Gestionnaire des fonctions de thumbnail pour le bot Telegram
+Thumbnail functions handler for Telegram bot
 """
 
 import logging
@@ -17,7 +17,7 @@ logger = logging.getLogger('UploaderBot')
 
 
 async def handle_thumbnail_functions(update, context):
-    """Affiche les options de gestion des thumbnails pour un canal"""
+    """Displays thumbnail management options for a channel"""
     query = update.callback_query
     await query.answer()
     
@@ -29,9 +29,9 @@ async def handle_thumbnail_functions(update, context):
     
     if not channel_username:
         await query.edit_message_text(
-            "❌ Aucun canal sélectionné.",
-            reply_markup=InlineKeyboardMarkup([[
-                InlineKeyboardButton("↩️ Retour", callback_data="custom_settings")
+            "❌ No channel selected.",
+            reply_markup=InlineKeyboardMarkup([[ 
+                InlineKeyboardButton("↩️ Back", callback_data="custom_settings")
             ]])
         )
         return SETTINGS
@@ -47,22 +47,22 @@ async def handle_thumbnail_functions(update, context):
     try:
         existing_thumbnail = db_manager.get_thumbnail(clean_username, user_id)
     except Exception as e:
-        logger.error(f"Erreur lors de la récupération du thumbnail: {e}")
+        logger.error(f"Error retrieving thumbnail: {e}")
         existing_thumbnail = None
     
     keyboard = []
     
     if existing_thumbnail:
-        keyboard.append([InlineKeyboardButton("👁️ Voir le thumbnail actuel", callback_data="view_thumbnail")])
-        keyboard.append([InlineKeyboardButton("🔄 Changer le thumbnail", callback_data="add_thumbnail")])
-        keyboard.append([InlineKeyboardButton("🗑️ Supprimer le thumbnail", callback_data="delete_thumbnail")])
+        keyboard.append([InlineKeyboardButton("👁️ View current thumbnail", callback_data="view_thumbnail")])
+        keyboard.append([InlineKeyboardButton("🔄 Change thumbnail", callback_data="add_thumbnail")])
+        keyboard.append([InlineKeyboardButton("🗑️ Delete thumbnail", callback_data="delete_thumbnail")])
     else:
-        keyboard.append([InlineKeyboardButton("➕ Ajouter un thumbnail", callback_data="add_thumbnail")])
-    
-    keyboard.append([InlineKeyboardButton("↩️ Retour", callback_data=f"custom_channel_{clean_username}")])
-    
-    message = f"🖼️ Gestion du thumbnail pour @{clean_username}\n\n"
-    message += "✅ Thumbnail enregistré" if existing_thumbnail else "❌ Aucun thumbnail enregistré"
+        keyboard.append([InlineKeyboardButton("➕ Add thumbnail", callback_data="add_thumbnail")])
+
+    keyboard.append([InlineKeyboardButton("↩️ Back", callback_data=f"custom_channel_{clean_username}")])
+
+    message = f"🖼️ Thumbnail management for @{clean_username}\n\n"
+    message += "✅ Thumbnail set" if existing_thumbnail else "❌ No thumbnail set"
     
     await query.edit_message_text(
         message,
@@ -73,7 +73,7 @@ async def handle_thumbnail_functions(update, context):
 
 
 async def handle_add_thumbnail_to_post(update, context):
-    """Applique automatiquement le thumbnail enregistré à un post"""
+    """Automatically applies the saved thumbnail to a post and sends it as a document"""
     query = update.callback_query
     await query.answer()
     
@@ -109,89 +109,137 @@ async def handle_add_thumbnail_to_post(update, context):
             )
             return MAIN_MENU
         
-        # Récupérer le thumbnail enregistré avec logs de debug améliorés
+        # Retrieve the saved thumbnail with extra debug logs
         from database.manager import DatabaseManager
         db_manager = DatabaseManager()
-        logger.info(f"RECHERCHE THUMBNAIL: user_id={user_id}, canal_original='{channel_username}', canal_nettoye='{clean_username}'")
+        # Reduced verbose debug logging
         try:
-            thumbnail_file_id = db_manager.get_thumbnail(clean_username, user_id)
+            thumbnail_data = db_manager.get_thumbnail(clean_username, user_id)
         except Exception as e:
-            logger.error(f"Erreur lors de la récupération du thumbnail: {e}")
-            thumbnail_file_id = None
-        logger.info(f"RESULTAT THUMBNAIL: {thumbnail_file_id}")
+            logger.error(f"Error retrieving thumbnail: {e}")
+            thumbnail_data = None
+        # logger.debug(f"Thumbnail fetch result: {thumbnail_data}")
         
-        # DEBUG: Si pas trouvé, faire un diagnostic complet
-        if not thumbnail_file_id:
-            logger.warning(f"⚠️ Aucun thumbnail trouvé pour le canal @{clean_username} (user_id: {user_id})")
+        # DEBUG: If not found, log diagnostics
+        if not thumbnail_data:
+            logger.warning(f"⚠️ No thumbnail found for channel @{clean_username} (user_id: {user_id})")
         
         # DEBUG: Vérifier quels thumbnails existent pour cet utilisateur
-        logger.info(f"DEBUG: Vérification de tous les thumbnails pour user_id={user_id}")
+        # logger.debug(f"Checking thumbnails for user_id={user_id}")
         
-        if not thumbnail_file_id:
+        if not thumbnail_data:
             await context.bot.send_message(
                 chat_id=query.message.chat_id,
-                text=f"❌ Aucun thumbnail enregistré pour @{clean_username}.\n"
-                     "Veuillez d'abord enregistrer un thumbnail via les paramètres.",
-                reply_markup=InlineKeyboardMarkup([[
-                    InlineKeyboardButton("⚙️ Aller aux paramètres", callback_data="custom_settings"),
-                    InlineKeyboardButton("↩️ Retour", callback_data="main_menu")
+                text=f"❌ No thumbnail saved for @{clean_username}.\n"
+                     "Please save a thumbnail first in Settings.",
+                reply_markup=InlineKeyboardMarkup([[ 
+                    InlineKeyboardButton("⚙️ Go to settings", callback_data="custom_settings"),
+                    InlineKeyboardButton("↩️ Back", callback_data="main_menu")
                 ]])
             )
             return WAITING_PUBLICATION_CONTENT
         
         # Appliquer le thumbnail au post
-        post['thumbnail'] = thumbnail_file_id
+        post['thumbnail'] = thumbnail_data
+        post['has_custom_thumbnail'] = True
 
-        # Envoyer l'aperçu à jour avec une fonction de prévisualisation simplifiée
-        try:
-            # Créer un aperçu simple sans import circulaire
-            if post['type'] == 'photo':
-                await context.bot.send_photo(
-                    chat_id=query.message.chat_id,
-                    photo=post['content'],
-                    caption=f"✅ Thumbnail appliqué!\nType: {post['type']}"
-                )
-            elif post['type'] == 'video':
-                await context.bot.send_video(
-                    chat_id=query.message.chat_id,
-                    video=post['content'],
-                    caption=f"✅ Thumbnail appliqué!\nType: {post['type']}"
-                )
-            elif post['type'] == 'document':
-                await context.bot.send_document(
-                    chat_id=query.message.chat_id,
-                    document=post['content'],
-                    caption=f"✅ Thumbnail appliqué!\nType: {post['type']}"
-                )
-        except Exception as preview_error:
-            logger.warning(f"Erreur aperçu: {preview_error}")
-
-        # Mettre à jour le message pour confirmer
-        await context.bot.send_message(
+        # Progress message
+        progress_msg = await context.bot.send_message(
             chat_id=query.message.chat_id,
-            text=f"✅ Thumbnail appliqué au post!\n\n"
-                 f"Le thumbnail enregistré pour @{clean_username} a été ajouté à votre {post['type']}.",
-            reply_markup=InlineKeyboardMarkup([[
-                InlineKeyboardButton("↩️ Menu principal", callback_data="main_menu")
-            ]])
+            text="🖼️ **Processing with thumbnail...**"
         )
-        
-        return WAITING_PUBLICATION_CONTENT
-        
+
+        try:
+            # Utiliser la fonction process_thumbnail_and_upload pour traiter le fichier
+            from .callback_handlers import process_thumbnail_and_upload
+            
+            # Forcer l'envoi en document pour tous les types de fichiers
+            context.user_data['force_document_for_video'] = True
+ 
+            # Déterminer le nouveau nom de fichier à partir de la légende existante
+            try:
+                original_filename = post.get('filename')
+                caption_text = (post.get('caption') or "").strip()
+                if caption_text:
+                    # Aplatir les retours à la ligne et nettoyer quelques caractères problématiques
+                    flat_caption = " ".join(caption_text.splitlines()).strip()
+                    # Retirer les @mentions Telegram (sans toucher aux emails)
+                    import re
+                    flat_caption = re.sub(r'(?:(?<=\s)|^)(@[A-Za-z0-9_]{5,32})\b', ' ', flat_caption)
+                    # Normaliser les espaces
+                    flat_caption = re.sub(r'\s+', ' ', flat_caption).strip()
+                    flat_caption = flat_caption.replace("/", "-").replace("\\", "-").replace(":", "-")
+                    import os
+                    ext = os.path.splitext(original_filename or "")[1]
+                    if not ext and (post.get('type') == 'video'):
+                        ext = ".mp4"
+                    new_name = flat_caption
+                    # Si la légende devient vide après nettoyage, fallback au nom original
+                    if not new_name:
+                        new_name = (original_filename or f"file_{post_index}")
+                    if ext and not new_name.lower().endswith(ext.lower()):
+                        new_name = f"{new_name}{ext}"
+                    context.user_data['pending_rename_filename'] = new_name
+                else:
+                    # Aucune légende: ne pas forcer de renommage explicite ici
+                    context.user_data.pop('pending_rename_filename', None)
+            except Exception:
+                pass
+            
+            # Appeler la fonction de traitement
+            success = await process_thumbnail_and_upload(update, context, post_index)
+            
+            if success:
+                # Le média final a déjà été renvoyé avec boutons par process_thumbnail_and_upload
+                # Supprimer le message de progression
+                try:
+                    await context.bot.delete_message(chat_id=query.message.chat_id, message_id=progress_msg.message_id)
+                except Exception:
+                    pass
+                
+                await context.bot.send_message(
+                    chat_id=query.message.chat_id,
+                    text=f"✅ **Thumbnail applied and file sent as a document!**\n\n"
+                         f"The saved thumbnail for @{clean_username} was applied to your {post['type']} "
+                         f"and the file was re-sent as a document with edit buttons.",
+                    reply_markup=InlineKeyboardMarkup([[ 
+                        InlineKeyboardButton("↩️ Main menu", callback_data="main_menu")
+                    ]])
+                )
+                
+                return WAITING_PUBLICATION_CONTENT
+            else:
+                # En cas d'échec, afficher un message d'erreur
+                await context.bot.edit_message_text(
+                    chat_id=query.message.chat_id,
+                    message_id=progress_msg.message_id,
+                    text="❌ **Processing error**\n\nAn error occurred while applying the thumbnail."
+                )
+                return WAITING_PUBLICATION_CONTENT
+                
+        except Exception as process_error:
+            logger.error(f"Error processing thumbnail: {process_error}")
+            await context.bot.edit_message_text(
+                chat_id=query.message.chat_id,
+                message_id=progress_msg.message_id,
+                text=f"❌ **Processing error**\n\n{str(process_error)}"
+            )
+            return WAITING_PUBLICATION_CONTENT
+
     except Exception as e:
-        logger.error(f"Erreur dans handle_add_thumbnail_to_post: {e}")
+        logger.error(f"Error in handle_add_thumbnail_to_post: {e}")
         await context.bot.send_message(
             chat_id=query.message.chat_id,
-            text="❌ Une erreur est survenue.",
+            text="❌ An error occurred.",
             reply_markup=InlineKeyboardMarkup([[
-                InlineKeyboardButton("↩️ Menu principal", callback_data="main_menu")
+                InlineKeyboardButton("↩️ Main menu", callback_data="main_menu")
             ]])
         )
         return MAIN_MENU
 
 
 async def handle_set_thumbnail_and_rename(update, context):
-    """Applique le thumbnail ET permet de renommer le fichier"""
+    """Applies the thumbnail AND lets you rename the file"""
     query = update.callback_query
     await query.answer()
     
@@ -203,9 +251,9 @@ async def handle_set_thumbnail_and_rename(update, context):
         if 'posts' not in context.user_data or post_index >= len(context.user_data['posts']):
             await context.bot.send_message(
                 chat_id=query.message.chat_id,
-                text="❌ Post introuvable.",
-                reply_markup=InlineKeyboardMarkup([[
-                    InlineKeyboardButton("↩️ Menu principal", callback_data="main_menu")
+                text="❌ Post not found.",
+                reply_markup=InlineKeyboardMarkup([[ 
+                    InlineKeyboardButton("↩️ Main menu", callback_data="main_menu")
                 ]])
             )
             return MAIN_MENU
@@ -220,9 +268,9 @@ async def handle_set_thumbnail_and_rename(update, context):
         if not clean_username:
             await context.bot.send_message(
                 chat_id=query.message.chat_id,
-                text="❌ Impossible de déterminer le canal cible.",
-                reply_markup=InlineKeyboardMarkup([[
-                    InlineKeyboardButton("↩️ Menu principal", callback_data="main_menu")
+                text="❌ Unable to determine the target channel.",
+                reply_markup=InlineKeyboardMarkup([[ 
+                    InlineKeyboardButton("↩️ Main menu", callback_data="main_menu")
                 ]])
             )
             return MAIN_MENU
@@ -238,9 +286,9 @@ async def handle_set_thumbnail_and_rename(update, context):
         
         if thumbnail_file_id:
             post['thumbnail'] = thumbnail_file_id
-            thumbnail_status = "✅ Thumbnail appliqué"
+            thumbnail_status = "✅ Thumbnail applied"
         else:
-            thumbnail_status = "⚠️ Aucun thumbnail enregistré pour ce canal"
+            thumbnail_status = "⚠️ No thumbnail saved for this channel"
         
         # Stocker l'index pour le renommage
         context.user_data['waiting_for_rename'] = True
@@ -249,31 +297,31 @@ async def handle_set_thumbnail_and_rename(update, context):
         # Demander le nouveau nom
         await context.bot.send_message(
             chat_id=query.message.chat_id,
-            text=f"🖼️✏️ Thumbnail + Renommage\n\n"
+            text=f"🖼️✏️ Thumbnail + Rename\n\n"
                  f"{thumbnail_status}\n\n"
-                 f"Maintenant, envoyez-moi le nouveau nom pour votre fichier (avec l'extension).\n"
-                 f"Par exemple: mon_document.pdf",
+                 f"Now send the new filename (with extension).\n"
+                 f"Example: my_document.pdf",
             reply_markup=InlineKeyboardMarkup([[
-                InlineKeyboardButton("❌ Annuler", callback_data=f"cancel_rename_{post_index}")
+                InlineKeyboardButton("❌ Cancel", callback_data=f"cancel_rename_{post_index}")
             ]])
         )
         
         return WAITING_RENAME_INPUT
         
     except Exception as e:
-        logger.error(f"Erreur dans handle_set_thumbnail_and_rename: {e}")
+        logger.error(f"Error in handle_set_thumbnail_and_rename: {e}")
         await context.bot.send_message(
             chat_id=query.message.chat_id,
-            text="❌ Une erreur est survenue.",
+            text="❌ An error occurred.",
             reply_markup=InlineKeyboardMarkup([[
-                InlineKeyboardButton("↩️ Menu principal", callback_data="main_menu")
+                InlineKeyboardButton("↩️ Main menu", callback_data="main_menu")
             ]])
         )
         return MAIN_MENU
 
 
 async def handle_view_thumbnail(update, context):
-    """Affiche le thumbnail enregistré pour un canal"""
+    """Displays the saved thumbnail for a channel"""
     query = update.callback_query
     await query.answer()
     
@@ -319,24 +367,24 @@ async def handle_view_thumbnail(update, context):
                 # Ancien format (juste file_id)
                 file_id = thumbnail_data
             
-            # Priorité au fichier local
+            # Prefer local file if present
             if local_path and os.path.exists(local_path):
-                logger.info(f"📁 Utilisation du fichier local: {local_path}")
+                # logger.debug(f"Using local thumbnail file: {local_path}")
                 with open(local_path, 'rb') as f:
                     await context.bot.send_photo(
                         chat_id=query.message.chat_id,
                         photo=f,
-                        caption=f"🖼️ Thumbnail actuel pour @{clean_username} (fichier local)"
+                    caption=f"🖼️ Current thumbnail for @{clean_username} (local file)"
                     )
             elif file_id:
-                logger.info(f"📱 Utilisation du file_id: {file_id[:30]}...")
+                # logger.debug("Using thumbnail file_id")
                 await context.bot.send_photo(
                     chat_id=query.message.chat_id,
                     photo=file_id,
-                    caption=f"🖼️ Thumbnail actuel pour @{clean_username} (file_id)"
+                    caption=f"🖼️ Current thumbnail for @{clean_username} (file_id)"
                 )
             else:
-                raise Exception("Aucun thumbnail valide trouvé")
+                raise Exception("No valid thumbnail found")
             
             keyboard = [
                 [InlineKeyboardButton("🔄 Changer", callback_data="add_thumbnail")],
@@ -345,22 +393,22 @@ async def handle_view_thumbnail(update, context):
             ]
             
             await query.message.reply_text(
-                "Que voulez-vous faire avec ce thumbnail?",
+                "What would you like to do with this thumbnail?",
                 reply_markup=InlineKeyboardMarkup(keyboard)
             )
         except Exception as e:
-            logger.error(f"Erreur lors de l'affichage du thumbnail: {e}")
+            logger.error(f"Error while displaying thumbnail: {e}")
             await query.edit_message_text(
-                "❌ Impossible d'afficher le thumbnail.",
+                "❌ Unable to display the thumbnail.",
                 reply_markup=InlineKeyboardMarkup([[
-                    InlineKeyboardButton("↩️ Retour", callback_data="thumbnail_menu")
+                    InlineKeyboardButton("↩️ Back", callback_data="thumbnail_menu")
                 ]])
             )
     else:
         await query.edit_message_text(
-            "❌ Aucun thumbnail enregistré pour ce canal.",
+                "❌ No thumbnail saved for this channel.",
             reply_markup=InlineKeyboardMarkup([[
-                InlineKeyboardButton("↩️ Retour", callback_data="thumbnail_menu")
+                    InlineKeyboardButton("↩️ Back", callback_data="thumbnail_menu")
             ]])
         )
     
@@ -368,7 +416,7 @@ async def handle_view_thumbnail(update, context):
 
 
 async def handle_delete_thumbnail(update, context):
-    """Supprime le thumbnail enregistré pour un canal"""
+    """Deletes the saved thumbnail for a channel"""
     query = update.callback_query
     await query.answer()
     
@@ -379,9 +427,9 @@ async def handle_delete_thumbnail(update, context):
     
     if not channel_username:
         await query.edit_message_text(
-            "❌ Aucun canal sélectionné.",
-            reply_markup=InlineKeyboardMarkup([[
-                InlineKeyboardButton("↩️ Retour", callback_data="custom_settings")
+            "❌ No channel selected.",
+            reply_markup=InlineKeyboardMarkup([[ 
+                InlineKeyboardButton("↩️ Back", callback_data="custom_settings")
             ]])
         )
         return SETTINGS
@@ -409,7 +457,7 @@ async def handle_delete_thumbnail(update, context):
         if success and local_path and os.path.exists(local_path):
             try:
                 os.remove(local_path)
-                logger.info(f"✅ Fichier thumbnail supprimé: {local_path}")
+                # logger.debug(f"Local thumbnail file deleted: {local_path}")
             except Exception as file_error:
                 logger.warning(f"⚠️ Impossible de supprimer le fichier thumbnail: {file_error}")
                 
@@ -419,16 +467,16 @@ async def handle_delete_thumbnail(update, context):
     
     if success:
         await query.edit_message_text(
-            f"✅ Thumbnail supprimé pour @{clean_username}",
-            reply_markup=InlineKeyboardMarkup([[
-                InlineKeyboardButton("↩️ Retour", callback_data="thumbnail_menu")
+            f"✅ Thumbnail deleted for @{clean_username}",
+            reply_markup=InlineKeyboardMarkup([[ 
+                InlineKeyboardButton("↩️ Back", callback_data="thumbnail_menu")
             ]])
         )
     else:
         await query.edit_message_text(
-            "❌ Erreur lors de la suppression du thumbnail.",
-            reply_markup=InlineKeyboardMarkup([[
-                InlineKeyboardButton("↩️ Retour", callback_data="thumbnail_menu")
+            "❌ Error while deleting thumbnail.",
+            reply_markup=InlineKeyboardMarkup([[ 
+                InlineKeyboardButton("↩️ Back", callback_data="thumbnail_menu")
             ]])
         )
     
@@ -443,18 +491,18 @@ async def handle_thumbnail_input(update, context):
             selected_channel = context.user_data.get('selected_channel', {})
             if not selected_channel:
                 await update.message.reply_text(
-                    "❌ Aucun canal sélectionné.",
-                    reply_markup=InlineKeyboardMarkup([[
-                        InlineKeyboardButton("↩️ Menu principal", callback_data="main_menu")
+                    "❌ No channel selected.",
+                    reply_markup=InlineKeyboardMarkup([[ 
+                        InlineKeyboardButton("↩️ Main menu", callback_data="main_menu")
                     ]])
                 )
                 return MAIN_MENU
             
             if not update.message.photo:
                 await update.message.reply_text(
-                    "❌ Merci d'envoyer une photo (image) pour la miniature.",
-                    reply_markup=InlineKeyboardMarkup([[
-                        InlineKeyboardButton("↩️ Retour", callback_data="thumbnail_menu")
+                    "❌ Please send a photo image for the thumbnail.",
+                    reply_markup=InlineKeyboardMarkup([[ 
+                        InlineKeyboardButton("↩️ Back", callback_data="thumbnail_menu")
                     ]])
                 )
                 return WAITING_THUMBNAIL
@@ -467,9 +515,9 @@ async def handle_thumbnail_input(update, context):
             
             if not clean_username:
                 await update.message.reply_text(
-                    "❌ Erreur: impossible de déterminer le canal cible.",
-                    reply_markup=InlineKeyboardMarkup([[
-                        InlineKeyboardButton("↩️ Retour", callback_data="thumbnail_menu")
+                    "❌ Error: unable to determine the target channel.",
+                    reply_markup=InlineKeyboardMarkup([[ 
+                        InlineKeyboardButton("↩️ Back", callback_data="thumbnail_menu")
                     ]])
                 )
                 return SETTINGS
@@ -508,7 +556,7 @@ async def handle_thumbnail_input(update, context):
                 file_obj = await context.bot.get_file(photo.file_id)
                 await file_obj.download_to_drive(local_path)
                 
-                logger.info(f"✅ Thumbnail téléchargé localement: {local_path}")
+                # logger.debug(f"Thumbnail downloaded: {local_path}")
                 
                 # Enregistrer le thumbnail dans la base de données (file_id + local_path)
                 from database.manager import DatabaseManager
@@ -520,22 +568,22 @@ async def handle_thumbnail_input(update, context):
                 success = False
                 
             if success:
-                logger.info(f"ENREGISTREMENT: user_id={user_id}, channel={clean_username}, file_id={photo.file_id}")
+                # logger.debug(f"Thumbnail saved: user_id={user_id}, channel={clean_username}")
                 context.user_data['waiting_for_channel_thumbnail'] = False
                 
                 await update.message.reply_text(
-                    f"✅ Thumbnail enregistré avec succès pour @{clean_username}!",
-                    reply_markup=InlineKeyboardMarkup([[
-                        InlineKeyboardButton("↩️ Retour", callback_data=f"custom_channel_{clean_username}")
+                    f"✅ Thumbnail saved successfully for @{clean_username}!",
+                    reply_markup=InlineKeyboardMarkup([[ 
+                        InlineKeyboardButton("↩️ Back", callback_data=f"custom_channel_{clean_username}")
                     ]])
                 )
                 
                 return SETTINGS
             else:
                 await update.message.reply_text(
-                    "❌ Erreur lors de l'enregistrement du thumbnail.",
-                    reply_markup=InlineKeyboardMarkup([[
-                        InlineKeyboardButton("↩️ Retour", callback_data=f"custom_channel_{clean_username}")
+                    "❌ Error while saving the thumbnail.",
+                    reply_markup=InlineKeyboardMarkup([[ 
+                        InlineKeyboardButton("↩️ Back", callback_data=f"custom_channel_{clean_username}")
                     ]])
                 )
                 return SETTINGS
@@ -548,28 +596,28 @@ async def handle_thumbnail_input(update, context):
             context.user_data['waiting_for_thumbnail'] = False
             
             await update.message.reply_text(
-                "✅ Thumbnail enregistré!",
+                "✅ Thumbnail saved!",
                 reply_markup=InlineKeyboardMarkup([[
-                    InlineKeyboardButton("↩️ Retour", callback_data="custom_settings")
+                    InlineKeyboardButton("↩️ Back", callback_data="custom_settings")
                 ]])
             )
             return SETTINGS
         
         else:
             await update.message.reply_text(
-                "❌ Je n'attends pas de thumbnail actuellement.",
-                reply_markup=InlineKeyboardMarkup([[
-                    InlineKeyboardButton("↩️ Menu principal", callback_data="main_menu")
+                "❌ I am not expecting a thumbnail right now.",
+                reply_markup=InlineKeyboardMarkup([[ 
+                    InlineKeyboardButton("↩️ Main menu", callback_data="main_menu")
                 ]])
             )
             return MAIN_MENU
     
     except Exception as e:
-        logger.error(f"Erreur lors du traitement du thumbnail: {e}")
+        logger.error(f"Error while processing thumbnail: {e}")
         await update.message.reply_text(
-            "❌ Une erreur est survenue lors du traitement de votre image.",
+            "❌ An error occurred while processing your image.",
             reply_markup=InlineKeyboardMarkup([[
-                InlineKeyboardButton("↩️ Menu principal", callback_data="main_menu")
+                InlineKeyboardButton("↩️ Main menu", callback_data="main_menu")
             ]])
         )
         return MAIN_MENU
@@ -584,7 +632,7 @@ async def handle_add_thumbnail(update, context):
         channel_username = selected_channel.get('username')
         
     if not channel_username:
-        await update.callback_query.edit_message_text("Aucun canal sélectionné.")
+        await update.callback_query.edit_message_text("No channel selected.")
         return SETTINGS
     
     user_id = update.effective_user.id
@@ -597,10 +645,10 @@ async def handle_add_thumbnail(update, context):
     existing_thumbnail = db_manager.get_thumbnail(clean_username, user_id)
     if existing_thumbnail:
         await update.callback_query.edit_message_text(
-            f"⚠️ Un thumbnail est déjà enregistré pour @{clean_username}.\n\n"
-            f"Pour changer le thumbnail, vous devez d'abord supprimer l'ancien via le menu de gestion des thumbnails.",
+        f"⚠️ A thumbnail is already saved for @{clean_username}.\n\n"
+        f"To change the thumbnail, you must first delete the existing one via the thumbnail management menu.",
             reply_markup=InlineKeyboardMarkup([[
-                InlineKeyboardButton("↩️ Retour", callback_data=f"custom_channel_{clean_username}")
+            InlineKeyboardButton("↩️ Back", callback_data=f"custom_channel_{clean_username}")
             ]])
         )
         return SETTINGS
@@ -610,10 +658,10 @@ async def handle_add_thumbnail(update, context):
     context.user_data['waiting_for_channel_thumbnail'] = True
     
     await update.callback_query.edit_message_text(
-        f"📷 Envoyez-moi l'image à utiliser comme thumbnail pour @{channel_username}.\n\n"
-        "L'image doit faire moins de 200 KB.",
-        reply_markup=InlineKeyboardMarkup([[
-            InlineKeyboardButton("❌ Annuler", callback_data=f"custom_channel_{clean_username}")
+        f"📷 Send the image to use as the thumbnail for @{channel_username}.\n\n"
+        "The image must be under 200 KB.",
+        reply_markup=InlineKeyboardMarkup([[ 
+            InlineKeyboardButton("❌ Cancel", callback_data=f"custom_channel_{clean_username}")
         ]])
     )
     return WAITING_THUMBNAIL 

@@ -8,14 +8,14 @@ from telegram.error import BadRequest
 logger = logging.getLogger(__name__)
 
 class PostType(Enum):
-    """Types de messages supportés"""
+    """Supported message types"""
     PHOTO = "photo"
     VIDEO = "video"
     DOCUMENT = "document"
     TEXT = "text"
 
 class MessageError(Exception):
-    """Exception pour les erreurs d'envoi de messages"""
+    """Exception for message sending errors"""
     pass
 
 async def send_message(
@@ -74,11 +74,11 @@ async def send_message(
                 reply_markup=buttons
             )
         else:
-            raise MessageError(f"Type de message non supporté: {post_type}")
+            raise MessageError(f"Unsupported message type: {post_type}")
             
     except Exception as e:
-        logger.error(f"Erreur d'envoi de message: {e}")
-        raise MessageError(f"Impossible d'envoyer le message: {str(e)}")
+        logger.error(f"Message sending error: {e}")
+        raise MessageError(f"Unable to send message: {str(e)}")
 
 async def edit_message(
     update: Update,

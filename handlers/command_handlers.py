@@ -6,10 +6,31 @@ from telegram.ext import ContextTypes, ConversationHandler
 from utils.message_utils import send_message, PostType, MessageError
 from database.manager import DatabaseManager
 from utils.error_handler import handle_error
-from conversation_states import MAIN_MENU, POST_CONTENT, SCHEDULE_SEND, SETTINGS
+from conversation_states import MAIN_MENU, POST_CONTENT, SCHEDULE_SEND, SETTINGS, WAITING_THUMBNAIL, WAITING_CHANNEL_INFO
+from database.channel_repo import list_user_channels
 
 logger = logging.getLogger('TelegramBot')
 
+
+WELCOME_TEXT = (
+    "👋 Welcome to Rename & Scheduler Bot!\n\n"
+    "I help you rename captions/filenames, set a custom thumbnail, and schedule your posts to your channels.\n\n"
+    "📋 Features:\n"
+    "• Rename caption/filename\n"
+    "• Set a custom thumbnail\n"
+    "• Schedule post sending\n\n"
+    "🎯 Commands:\n"
+    "/start - Show this message\n"
+    "/help - Show help and usage\n"
+    "/addchannel - Add a new channel (Name @username or just @username)\n"
+    "/setthumbnail - Set a thumbnail for a channel (use with @username or current selection)\n"
+    "/settings - Open settings\n\n"
+    "🛠 Admin commands:\n"
+    "/addfsub - Add forced-subscription channels (admin)\n"
+    "/delfsub - Delete forced-subscription channels (admin)\n"
+    "/channels - List forced-subscription channels (admin)\n"
+    "/status - Bot status\n"
+)
 
 class CommandHandlers:
     """Gestionnaire des commandes du bot"""
@@ -29,18 +50,15 @@ class CommandHandlers:
         self.db_manager = db_manager
         self.scheduled_tasks = scheduled_tasks
 
-        logger.info("Gestionnaire de commandes initialisé")
+        logger.debug("Command handlers initialized")
 
     async def start(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-        """Gère la commande /start"""
+        """Handles the /start command"""
         user = update.effective_user
         user_id = user.id
 
-        # Message de bienvenue unifié
-        welcome_message = (
-            "Bienvenue sur le Publisher Bot!\n"
-            "Que souhaitez-vous faire ?"
-        )
+        # Message d'accueil
+        welcome_message = WELCOME_TEXT
 
         # Initialisation de la structure de données utilisateur si nécessaire
         if 'posts' not in context.user_data:
@@ -48,37 +66,37 @@ class CommandHandlers:
         if 'selected_channel' not in context.user_data:
             context.user_data['selected_channel'] = None
 
-        # Création du clavier inline (harmonisé avec callback_handlers.py)
+        # Create inline keyboard (aligned with callback_handlers.py)
         keyboard = [
-            [InlineKeyboardButton("📝 Nouvelle publication", callback_data="create_publication")],
-            [InlineKeyboardButton("📅 Publications planifiées", callback_data="planifier_post")],
-            [InlineKeyboardButton("📊 Statistiques", callback_data="channel_stats")],
-            [InlineKeyboardButton("⚙️ Paramètres", callback_data="settings")]
+            [InlineKeyboardButton("📝 New post", callback_data="create_publication")],
+            [InlineKeyboardButton("📅 Scheduled posts", callback_data="planifier_post")],
+            [InlineKeyboardButton("📊 Statistics", callback_data="channel_stats")],
+            [InlineKeyboardButton("⚙️ Settings", callback_data="settings")]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
 
         # Envoyer le message avec le clavier
         await update.message.reply_text(welcome_message, reply_markup=reply_markup)
 
-        # Sauvegarder le fuseau horaire de l'utilisateur s'il n'est pas défini
+        # Save user timezone if not set
         timezone = self.db_manager.get_user_timezone(user_id)
         if not timezone:
-            self.db_manager.set_user_timezone(user_id, 'Europe/Paris')  # Fuseau par défaut
+            self.db_manager.set_user_timezone(user_id, 'Europe/Paris')  # Default timezone
 
-        logger.info(f"Utilisateur {user_id} a démarré le bot")
+        logger.debug(f"User {user_id} started the bot")
 
         return MAIN_MENU
 
     async def _start_publication_flow(self, update: Update, context: ContextTypes.DEFAULT_TYPE, 
                                       is_scheduled: bool = False) -> int:
-        """Fonction générique pour démarrer le flux de création/planification de publication"""
+        """Generic function to start create/schedule flow"""
         user_id = update.effective_user.id
 
-        # Message explicatif pour la planification
+        # Explanatory message for scheduling
         if is_scheduled:
             await update.message.reply_text(
-                "La planification vous permet de programmer l'envoi automatique de vos publications.\n\n"
-                "Commençons par créer votre publication, puis nous configurerons l'heure d'envoi."
+                "Scheduling lets you automatically send your posts at a chosen time.\n\n"
+                "Let's create your post first, then set the send time."
             )
 
         # Réinitialiser les données utilisateur pour cette session
@@ -87,13 +105,22 @@ class CommandHandlers:
         if is_scheduled:
             context.user_data['is_scheduled'] = True
 
-        # Récupérer les canaux de l'utilisateur
-        channels = self.db_manager.list_channels(user_id)
+        # Fetch user channels (only connected channels where bot+user are admins)
+        repo_channels = list_user_channels(user_id)
+        # Keep only channels that have a public @username (UI flow expects username)
+        channels = []
+        for ch in repo_channels:
+            username = ch.get('username')
+            if username:
+                channels.append({
+                    'name': ch.get('title') or username,
+                    'username': username
+                })
 
         if not channels:
             await update.message.reply_text(
-                "Vous n'avez pas encore configuré de canaux. "
-                "Veuillez d'abord ajouter un canal dans les paramètres."
+                "You haven't configured any channels yet. "
+                "Please add a channel in Settings first."
             )
             return ConversationHandler.END
 
@@ -106,60 +133,60 @@ class CommandHandlers:
             )]
             keyboard.append(button)
 
-        # Ajouter un bouton d'annulation
-        keyboard.append([InlineKeyboardButton("Annuler", callback_data="cancel")])
+        # Add cancel button
+        keyboard.append([InlineKeyboardButton("Cancel", callback_data="cancel")])
 
         reply_markup = InlineKeyboardMarkup(keyboard)
 
-        # Message adapté selon le type de publication
+        # Message adapted to the flow type
         message = (
-            "Veuillez sélectionner le canal sur lequel vous souhaitez planifier une publication:"
+            "Please select the channel where you want to schedule a post:"
             if is_scheduled else
-            "Veuillez sélectionner le canal sur lequel vous souhaitez publier:"
+            "Please select the channel where you want to publish:"
         )
         
         await update.message.reply_text(message, reply_markup=reply_markup)
 
-        action = "planification" if is_scheduled else "création"
-        logger.info(f"Utilisateur {user_id} a commencé la {action} d'une publication")
+        action = "scheduling" if is_scheduled else "creation"
+        logger.debug(f"User {user_id} started {action} flow")
 
         return SCHEDULE_SEND if is_scheduled else MAIN_MENU
 
     async def create_publication(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-        """Gère la commande /create"""
+        """Handles /create command"""
         return await self._start_publication_flow(update, context, is_scheduled=False)
 
     async def planifier_post(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-        """Gère la commande /schedule"""
+        """Handles /schedule command"""
         return await self._start_publication_flow(update, context, is_scheduled=True)
 
     async def settings(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-        """Gère la commande /settings"""
+        """Handles /settings command"""
         user_id = update.effective_user.id
 
-        # Création du clavier inline pour les paramètres
+        # Create inline keyboard for settings
         keyboard = [
-            [InlineKeyboardButton("🌐 Gérer mes canaux", callback_data='manage_channels')],
-            [InlineKeyboardButton("⏰ Fuseau horaire", callback_data='timezone_settings')],
-            [InlineKeyboardButton("🔄 Publications planifiées", callback_data='scheduled_posts')],
-            [InlineKeyboardButton("🏠 Retour au menu principal", callback_data='main_menu')]
+            [InlineKeyboardButton("🌐 Manage my channels", callback_data='manage_channels')],
+            [InlineKeyboardButton("⏰ Timezone", callback_data='timezone_settings')],
+            [InlineKeyboardButton("🔄 Scheduled posts", callback_data='scheduled_posts')],
+            [InlineKeyboardButton("🏠 Back to main menu", callback_data='main_menu')]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
 
         # Envoyer le message avec le clavier
         await update.message.reply_text(
-            "⚙️ *Paramètres*\n\n"
-            "Configurez vos préférences et gérez vos canaux Telegram ici.",
+            "⚙️ *Settings*\n\n"
+            "Configure your preferences and manage your Telegram channels here.",
             reply_markup=reply_markup,
             parse_mode='Markdown'
         )
 
-        logger.info(f"Utilisateur {user_id} a ouvert les paramètres")
+        logger.debug(f"User {user_id} opened settings")
 
         return SETTINGS
 
     async def cancel(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-        """Annule la conversation en cours"""
+        """Cancels the current conversation"""
         user_id = update.effective_user.id
 
         # Réinitialiser les données utilisateur
@@ -169,34 +196,34 @@ class CommandHandlers:
             context.user_data['selected_channel'] = None
 
         await update.message.reply_text(
-            "🛑 Opération annulée. Que souhaitez-vous faire maintenant ?",
+            "🛑 Operation cancelled. What would you like to do next?",
             reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("Retour au menu principal", callback_data="main_menu")]
+                [InlineKeyboardButton("Back to main menu", callback_data="main_menu")]
             ])
         )
 
-        logger.info(f"Utilisateur {user_id} a annulé l'opération en cours")
+        logger.debug(f"User {user_id} cancelled current operation")
 
         return MAIN_MENU
 
     async def list_publications(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """
-        Gère la commande /list
+        Handles /list command
 
         Args:
-            update: Mise à jour Telegram
-            context: Contexte du bot
+            update: Telegram update
+            context: Bot context
         """
         try:
-            # Récupère les publications planifiées
+            # Fetch scheduled posts
             posts = self.db_manager.get_future_scheduled_posts()
 
             if not posts:
-                await update.message.reply_text("Aucune publication planifiée.")
+                await update.message.reply_text("No scheduled posts.")
                 return
 
-            # Formatage de la liste
-            message = "📋 Publications planifiées :\n\n"
+            # Format list
+            message = "📋 Scheduled posts:\n\n"
             for post in posts:
                 channel = self.db_manager.get_channel(post['channel_id'])
                 message += (
@@ -212,56 +239,174 @@ class CommandHandlers:
 
     async def help(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """
-        Gère la commande /help
+        Handles /help command
 
         Args:
-            update: Mise à jour Telegram
-            context: Contexte du bot
+            update: Telegram update
+            context: Bot context
         """
         help_text = (
-            "🤖 *Aide et Instructions*\n\n"
-            "*Commandes principales:*\n"
-            "/start - Démarre le bot et affiche le menu principal\n"
-            "/create - Crée une nouvelle publication\n"
-            "/schedule - Planifie une publication\n"
-            "/settings - Configure vos préférences\n"
-            "/help - Affiche ce message d'aide\n\n"
+            "📘 Bot features description\n"
+            "This Telegram bot helps you manage and publish content to your channels. "
+            "It provides an intuitive interface with buttons to automate your publications.\n\n"
 
-            "*Création de publications:*\n"
-            "1. Sélectionnez un canal\n"
-            "2. Envoyez les fichiers et/ou textes que vous souhaitez publier\n"
-            "3. Utilisez les boutons du clavier pour prévisualiser, envoyer ou annuler\n\n"
+            "🔹 Main menu\n"
+            "The bot shows four main options at startup:\n"
+            "• 📝 New post - Create a new post. Select the target channel, then send your content (text, photo, video or document). The bot accepts up to 24 files per post.\n"
+            "• 📅 Scheduled posts - View all your scheduled posts. You can see the planned send time and edit or cancel each post individually.\n"
+            "• 📊 Statistics - Feature under development.\n"
+            "• ⚙️ Settings - Configure the bot, including channel management, timezone and custom thumbnails.\n\n"
 
-            "*Planification:*\n"
-            "1. Créez votre publication comme d'habitude\n"
-            "2. Définissez la date et l'heure de publication\n"
-            "3. Confirmez la planification\n\n"
+            "🔧 Post editing features\n"
+            "Once your content is added, you can enhance it with:\n"
+            "• ✨ Add reactions - Add reaction buttons under your post. Users can click them and they will be counted. Up to 8 reactions.\n"
+            "• 🔗 Add URL button - Add a clickable button with an external link (website, channel, or any online resource).\n"
+            "• ✏️ Edit File - Three options: rename file, add a custom thumbnail, or both at once.\n"
+            "• ❌ Delete - Remove a file from the current post.\n\n"
 
-            "*Gestion des canaux:*\n"
-            "Dans les paramètres, vous pouvez ajouter de nouveaux canaux ou modifier les existants. "
-            "Assurez-vous que le bot soit administrateur des canaux que vous souhaitez gérer.\n\n"
+            "📤 Sending options\n"
+            "When your post is ready, you can:\n"
+            "• Send now - Immediately send the post to the selected channel.\n"
+            "• Schedule - Send at a specific date and time (choose Today or Tomorrow, then pick the time).\n"
+            "• Set auto-destruction time - Auto-delete the message after a defined delay (5 minutes to 24 hours).\n\n"
 
-            "Pour toute question supplémentaire, contactez l'administrateur du bot."
+            "📺 Channel management\n"
+            "In Settings, you can manage your Telegram channels:\n"
+            "• ➕ Add a channel - Register a new channel where you are an admin.\n"
+            "• 🖼️ Manage thumbnail - Set a default thumbnail for all files sent to a specific channel.\n"
+            "• 🏷️ Add a hashtag - Configure automatic hashtags added to all posts for that channel.\n\n"
+
+            "⌨️ Control buttons during creation\n"
+            "During post creation, four buttons remain visible:\n"
+            "• 📋 Preview - Show a preview of the post as it will appear in the channel.\n"
+            "• 🚀 Send - Open sending options (immediate, scheduled, or auto-destruction).\n"
+            "• 🗑️ Delete all - Clear all added files to start over.\n"
+            "• ❌ Cancel - Abort the current creation and return to the main menu.\n\n"
+
+            "This bot greatly simplifies managing your Telegram publications by centralizing all essential features in a clear and accessible interface."
         )
 
         await update.message.reply_text(help_text, parse_mode='Markdown')
 
-        logger.info(f"Utilisateur {update.effective_user.id} a demandé l'aide")
+        logger.debug(f"User {update.effective_user.id} requested help")
 
         return None
+
+    async def addchannel_cmd(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+        """Add a channel via command. Usage: /addchannel Name @username | @username | https://t.me/username"""
+        user_id = update.effective_user.id
+        args_text = " ".join(context.args).strip()
+
+        if not args_text:
+            # Prompt for input
+            await update.message.reply_text(
+                "➕ *Add a channel*\n\n"
+                "Send the channel @username or its t.me link.\n\n"
+                "Examples:\n"
+                "• `@mychannel`\n"
+                "• `https://t.me/mychannel`\n\n"
+                "The bot will use the channel's default name automatically.\n"
+                "⚠️ Ensure the bot is an administrator of the channel.",
+                parse_mode='Markdown'
+            )
+            context.user_data['waiting_for_channel_info'] = True
+            return WAITING_CHANNEL_INFO
+
+        # Parse inline args
+        channel_username = None
+        display_name = None
+        text = args_text
+        if text.startswith('https://t.me/'):
+            channel_username = text.replace('https://t.me/', '').strip().lstrip('@')
+            display_name = channel_username
+        elif text.startswith('@') and ' ' not in text:
+            channel_username = text.lstrip('@')
+            display_name = channel_username
+        elif '@' in text:
+            parts = text.rsplit('@', 1)
+            if len(parts) == 2:
+                display_name = parts[0].strip()
+                channel_username = parts[1].strip().lstrip('@')
+
+        if not channel_username:
+            await update.message.reply_text(
+                "❌ Invalid format. Use one of:\n"
+                "• `Channel name @username`\n"
+                "• `@username`\n"
+                "• `https://t.me/username`",
+                parse_mode='Markdown'
+            )
+            return SETTINGS
+
+        db = DatabaseManager()
+        # Check duplicate
+        if db.get_channel_by_username(channel_username, user_id):
+            await update.message.reply_text(
+                "ℹ️ Channel already registered.")
+            return SETTINGS
+
+        # Resolve official channel title from Telegram
+        name_to_use = display_name or channel_username
+        try:
+            try:
+                chat_ident = f"@{channel_username}" if not channel_username.startswith('@') else channel_username
+                chat = await context.bot.get_chat(chat_ident)
+                if getattr(chat, 'title', None):
+                    name_to_use = chat.title
+            except Exception:
+                pass
+
+            db.add_channel(name_to_use, channel_username, user_id)
+            await update.message.reply_text(
+                f"✅ Channel added!\n\n📺 {name_to_use} (@{channel_username})")
+            return SETTINGS
+        except Exception:
+            await update.message.reply_text("❌ Error while adding channel.")
+            return SETTINGS
+
+    async def setthumbnail_cmd(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+        """Set thumbnail for a channel. Usage: /setthumbnail @username (or use current selection)"""
+        # Determine target channel
+        arg_username = None
+        if context.args:
+            raw = context.args[0].strip()
+            if raw.startswith('https://t.me/'):
+                arg_username = raw.replace('https://t.me/', '').lstrip('@')
+            else:
+                arg_username = raw.lstrip('@')
+
+        if arg_username:
+            context.user_data['selected_channel'] = {'username': f"@{arg_username}", 'name': arg_username}
+        else:
+            selected = context.user_data.get('selected_channel', {})
+            if not selected or not selected.get('username'):
+                await update.message.reply_text(
+                    "❌ No channel selected. Provide an @username like `/setthumbnail @mychannel` or use Settings.",
+                    parse_mode='Markdown'
+                )
+                return SETTINGS
+
+        # Ask for image
+        channel_username = context.user_data.get('selected_channel', {}).get('username')
+        context.user_data['waiting_for_channel_thumbnail'] = True
+        await update.message.reply_text(
+            f"📷 Send the image to use as the thumbnail for {channel_username}.\n\n"
+            "The image must be under 200 KB."
+        )
+        return WAITING_THUMBNAIL
 
 
 # Fonction d'erreur générique pour les commandes
 async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Gère les erreurs survenues pendant l'exécution des commandes"""
-    logger.error(f"Une erreur s'est produite: {context.error}")
+    """Handles errors during command execution"""
+    logger.error(f"An error occurred: {context.error}")
 
     # Envoyer un message d'erreur à l'utilisateur si possible
     if update and update.effective_message:
         await update.effective_message.reply_text(
-            "Une erreur s'est produite lors du traitement de votre demande. "
-            "Veuillez réessayer ou contacter l'administrateur du bot."
+            "An error occurred while processing your request. "
+            "Please try again or contact the bot administrator."
         )
 
     # Journaliser les détails de l'erreur
-    logger.error(f"Update {update} a causé l'erreur {context.error}", exc_info=True)
+    logger.error(f"Update {update} caused error {context.error}", exc_info=True)

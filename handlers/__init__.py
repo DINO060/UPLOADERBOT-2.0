@@ -1,5 +1,5 @@
 """
-Module de gestion des handlers du bot.
+Bot handlers management module.
 """
 from .media_handler import send_file_smart, edit_message_media
 from .callback_handlers import handle_callback

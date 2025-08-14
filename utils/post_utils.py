@@ -185,9 +185,9 @@ def get_post_summary(post):
         if has_caption:
             extras.append("📝 Légende")
         if reactions_count > 0:
-            extras.append(f"✨ {reactions_count} réaction(s)")
+            extras.append(f"✨ {reactions_count} reaction(s)")
         if buttons_count > 0:
-            extras.append(f"🔗 {buttons_count} bouton(s)")
+            extras.append(f"🔗 {buttons_count} button(s)")
         
         result = " ".join(summary_parts)
         if extras:
@@ -196,7 +196,7 @@ def get_post_summary(post):
         return result
         
     except Exception as e:
-        logger.error(f"Erreur dans get_post_summary: {e}")
+        logger.error(f"Error in get_post_summary: {e}")
         return f"Post {post.get('type', 'unknown')}"
 
 

@@ -95,7 +95,7 @@ class Settings:
         
         # Validate required settings
         if not all([self.api_id, self.api_hash, self.bot_token]):
-            raise ValueError("Configuration incomplète : API_ID, API_HASH et BOT_TOKEN sont requis")
+            raise ValueError("Incomplete configuration: API_ID, API_HASH and BOT_TOKEN are required")
 
 # Create a global settings instance
 settings = Settings() 

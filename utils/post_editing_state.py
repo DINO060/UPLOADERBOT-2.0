@@ -10,26 +10,26 @@ class PostEditingState:
         self.original_content: Optional[str] = None
 
     def start_editing(self, post: Dict[str, Any], field: str):
-        """Démarre l'édition d'un post."""
+        """Starts editing a post."""
         self.current_post = post
         self.editing_field = field
         self.original_content = post.get(field)
 
     def save_edit(self, new_content: str) -> bool:
-        """Sauvegarde les modifications d'un post."""
+        """Saves post modifications."""
         if self.current_post and self.editing_field:
             self.current_post[self.editing_field] = new_content
             return True
         return False
 
     def cancel_edit(self):
-        """Annule les modifications en cours."""
+        """Cancels current modifications."""
         if self.current_post and self.editing_field and self.original_content:
             self.current_post[self.editing_field] = self.original_content
         self.reset()
 
     def reset(self):
-        """Réinitialise l'état d'édition."""
+        """Resets editing state."""
         self.current_post = None
         self.editing_field = None
         self.original_content = None 

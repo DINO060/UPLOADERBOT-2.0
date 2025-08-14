@@ -40,26 +40,26 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
         # Les boutons ReplyKeyboard sont maintenant gérés par le handler contextuel
         # Ce handler ne traite que le texte générique - rediriger vers menu principal
         keyboard = [
-            [InlineKeyboardButton("📝 Créer une publication", callback_data="create_publication")],
-            [InlineKeyboardButton("⏰ Planifier une publication", callback_data="schedule_publication")],
-            [InlineKeyboardButton("⚙️ Paramètres", callback_data="settings")],
-            [InlineKeyboardButton("❓ Aide", callback_data="help")]
+            [InlineKeyboardButton("📝 New post", callback_data="create_publication")],
+            [InlineKeyboardButton("⏰ Schedule a post", callback_data="schedule_publication")],
+            [InlineKeyboardButton("⚙️ Settings", callback_data="settings")],
+            [InlineKeyboardButton("❓ Help", callback_data="help")]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         
         await update.message.reply_text(
-            "Menu principal :",
+            "Main menu:",
             reply_markup=reply_markup
         )
         return MAIN_MENU
 
     except MessageError as e:
-        logger.error(f"Erreur de message: {str(e)}")
-        await update.message.reply_text(f"❌ Erreur: {str(e)}")
+        logger.error(f"Message error: {str(e)}")
+        await update.message.reply_text(f"❌ Error: {str(e)}")
         return 4  # WAITING_TEXT
     except Exception as e:
-        logger.error(f"Erreur inattendue: {str(e)}")
-        await update.message.reply_text("❌ Une erreur inattendue s'est produite")
+        logger.error(f"Unexpected error: {str(e)}")
+        await update.message.reply_text("❌ An unexpected error occurred")
         return 4  # WAITING_TEXT
 
 
@@ -85,27 +85,27 @@ async def handle_media(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
             context.user_data['media'] = update.message.video.file_id
             context.user_data['media_type'] = 'video'
         else:
-            raise MessageError("Format non supporté. Veuillez envoyer une photo ou une vidéo.")
+            raise MessageError("Unsupported format. Please send a photo or video.")
 
         keyboard = [
-            [InlineKeyboardButton("✅ Publier", callback_data="publish")],
-            [InlineKeyboardButton("❌ Annuler", callback_data="cancel")]
+            [InlineKeyboardButton("✅ Publish", callback_data="publish")],
+            [InlineKeyboardButton("❌ Cancel", callback_data="cancel")]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
 
         await update.message.reply_text(
-            "Média reçu. Que souhaitez-vous faire ?",
+            "Media received. What would you like to do?",
             reply_markup=reply_markup
         )
         return 9  # WAITING_CONFIRMATION
 
     except MessageError as e:
-        logger.error(f"Erreur de média: {str(e)}")
-        await update.message.reply_text(f"❌ Erreur: {str(e)}")
+        logger.error(f"Media error: {str(e)}")
+        await update.message.reply_text(f"❌ Error: {str(e)}")
         return 5  # WAITING_MEDIA
     except Exception as e:
-        logger.error(f"Erreur inattendue: {str(e)}")
-        await update.message.reply_text("❌ Une erreur inattendue s'est produite")
+        logger.error(f"Unexpected error: {str(e)}")
+        await update.message.reply_text("❌ An unexpected error occurred")
         return 5  # WAITING_MEDIA
 
 
@@ -128,22 +128,22 @@ async def handle_schedule_text(update: Update, context: ContextTypes.DEFAULT_TYP
         
         # Les boutons ReplyKeyboard sont maintenant gérés par le handler contextuel
         if not InputValidator.sanitize_text(text):
-            raise MessageError("Le texte contient des caractères non autorisés")
+            raise MessageError("Text contains forbidden characters")
 
         context.user_data['text'] = text
 
         await update.message.reply_text(
-            "Entrez la date et l'heure de publication (format: JJ/MM/AAAA HH:MM):"
+            "Enter the publish date and time (format: DD/MM/YYYY HH:MM):"
         )
         return 10  # WAITING_SCHEDULE_TIME
 
     except MessageError as e:
-        logger.error(f"Erreur de message planifié: {str(e)}")
-        await update.message.reply_text(f"❌ Erreur: {str(e)}")
+        logger.error(f"Scheduled message error: {str(e)}")
+        await update.message.reply_text(f"❌ Error: {str(e)}")
         return 6  # WAITING_SCHEDULE_TEXT
     except Exception as e:
-        logger.error(f"Erreur inattendue: {str(e)}")
-        await update.message.reply_text("❌ Une erreur inattendue s'est produite")
+        logger.error(f"Unexpected error: {str(e)}")
+        await update.message.reply_text("❌ An unexpected error occurred")
         return 6  # WAITING_SCHEDULE_TEXT
 
 
@@ -169,20 +169,20 @@ async def handle_schedule_media(update: Update, context: ContextTypes.DEFAULT_TY
             context.user_data['media'] = update.message.video.file_id
             context.user_data['media_type'] = 'video'
         else:
-            raise MessageError("Format non supporté. Veuillez envoyer une photo ou une vidéo.")
+            raise MessageError("Unsupported format. Please send a photo or video.")
 
         await update.message.reply_text(
-            "Entrez la date et l'heure de publication (format: JJ/MM/AAAA HH:MM):"
+            "Enter the publish date and time (format: DD/MM/YYYY HH:MM):"
         )
         return 10  # WAITING_SCHEDULE_TIME
 
     except MessageError as e:
-        logger.error(f"Erreur de média planifié: {str(e)}")
-        await update.message.reply_text(f"❌ Erreur: {str(e)}")
+        logger.error(f"Scheduled media error: {str(e)}")
+        await update.message.reply_text(f"❌ Error: {str(e)}")
         return 7  # WAITING_SCHEDULE_MEDIA
     except Exception as e:
-        logger.error(f"Erreur inattendue: {str(e)}")
-        await update.message.reply_text("❌ Une erreur inattendue s'est produite")
+        logger.error(f"Unexpected error: {str(e)}")
+        await update.message.reply_text("❌ An unexpected error occurred")
         return 7  # WAITING_SCHEDULE_MEDIA
 
 
@@ -212,19 +212,19 @@ async def handle_timezone(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         db.set_user_timezone(update.effective_user.id, timezone)
 
         await update.message.reply_text(
-            f"✅ Fuseau horaire configuré: {timezone}"
+            f"✅ Timezone configured: {timezone}"
         )
         return ConversationHandler.END
 
     except pytz.exceptions.UnknownTimeZoneError:
-        logger.error(f"Fuseau horaire invalide: {timezone}")
+        logger.error(f"Invalid timezone: {timezone}")
         await update.message.reply_text(
-            "❌ Fuseau horaire invalide. Veuillez réessayer."
+            "❌ Invalid timezone. Please try again."
         )
         return 8  # WAITING_TIMEZONE
     except Exception as e:
-        logger.error(f"Erreur inattendue: {str(e)}")
-        await update.message.reply_text("❌ Une erreur inattendue s'est produite")
+        logger.error(f"Unexpected error: {str(e)}")
+        await update.message.reply_text("❌ An unexpected error occurred")
         return 8  # WAITING_TIMEZONE
 
 
@@ -254,12 +254,12 @@ async def handle_timezone_input(update: Update, context: ContextTypes.DEFAULT_TY
             pytz.timezone(user_input)
         except pytz.exceptions.UnknownTimeZoneError:
             await update.message.reply_text(
-                "❌ Fuseau horaire invalide. Exemples valides :\n"
+                "❌ Invalid timezone. Valid examples:\n"
                 "• Europe/Paris\n"
                 "• America/New_York\n"
                 "• Asia/Tokyo\n"
                 "• UTC\n"
-                "Vous pouvez aussi taper 'France' pour Europe/Paris."
+                "You can also type 'France' for Europe/Paris."
             )
             return WAITING_TIMEZONE
         
@@ -269,14 +269,14 @@ async def handle_timezone_input(update: Update, context: ContextTypes.DEFAULT_TY
         
         if success:
             await update.message.reply_text(
-                f"✅ Fuseau horaire défini : {user_input}",
+                f"✅ Timezone set: {user_input}",
                 reply_markup=InlineKeyboardMarkup([
                     [InlineKeyboardButton("↩️ Retour aux paramètres", callback_data="settings")]
                 ])
             )
         else:
             await update.message.reply_text(
-                "❌ Erreur lors de la sauvegarde du fuseau horaire.",
+                "❌ Error saving timezone.",
                 reply_markup=InlineKeyboardMarkup([
                     [InlineKeyboardButton("↩️ Retour aux paramètres", callback_data="settings")]
                 ])
@@ -285,9 +285,9 @@ async def handle_timezone_input(update: Update, context: ContextTypes.DEFAULT_TY
         return SETTINGS
         
     except Exception as e:
-        logger.error(f"Erreur lors du traitement du fuseau horaire: {e}")
+        logger.error(f"Error processing timezone: {e}")
         await update.message.reply_text(
-            "❌ Une erreur est survenue lors de la configuration du fuseau horaire.",
+            "❌ An error occurred while configuring the timezone.",
             reply_markup=InlineKeyboardMarkup([
                 [InlineKeyboardButton("↩️ Retour aux paramètres", callback_data="settings")]
             ])
@@ -341,7 +341,7 @@ async def handle_channel_info(update: Update, context: ContextTypes.DEFAULT_TYPE
             # Validation finale
             if not channel_username:
                 await update.message.reply_text(
-                    "❌ Format invalide. Utilisez un de ces formats :\n"
+                    "❌ Invalid format. Use one of these formats:\n"
                     "• `Nom du canal @username`\n"
                     "• `@username`\n"
                     "• `https://t.me/username`\n\n"
@@ -359,7 +359,7 @@ async def handle_channel_info(update: Update, context: ContextTypes.DEFAULT_TYPE
             
             if db_manager.get_channel_by_username(channel_username, user_id):
                 await update.message.reply_text(
-                    "❌ Ce canal est déjà enregistré.",
+                    "❌ This channel is already registered.",
                     reply_markup=InlineKeyboardMarkup([
                         [InlineKeyboardButton("📋 Gérer les canaux", callback_data="manage_channels")],
                         [InlineKeyboardButton("↩️ Menu principal", callback_data="main_menu")]
@@ -373,7 +373,7 @@ async def handle_channel_info(update: Update, context: ContextTypes.DEFAULT_TYPE
                     db_manager.add_channel(display_name, channel_username, user_id)
                     
                     await update.message.reply_text(
-                        f"✅ Canal ajouté avec succès !\n\n"
+                        f"✅ Channel added successfully!\n\n"
                         f"📺 **{display_name}** (@{channel_username})",
                         reply_markup=InlineKeyboardMarkup([
                             [InlineKeyboardButton("📋 Gérer les canaux", callback_data="manage_channels")],
@@ -385,9 +385,9 @@ async def handle_channel_info(update: Update, context: ContextTypes.DEFAULT_TYPE
                     return SETTINGS
                     
                 except Exception as e:
-                    logger.error(f"Erreur lors de l'ajout du canal: {e}")
+                    logger.error(f"Error adding channel: {e}")
                     await update.message.reply_text(
-                        "❌ Erreur lors de l'ajout du canal.",
+                        "❌ Error adding channel.",
                         reply_markup=InlineKeyboardMarkup([
                             [InlineKeyboardButton("🔄 Réessayer", callback_data="add_channel")],
                             [InlineKeyboardButton("↩️ Retour", callback_data="manage_channels")]
@@ -395,56 +395,32 @@ async def handle_channel_info(update: Update, context: ContextTypes.DEFAULT_TYPE
                     )
                     return SETTINGS
             
-            # Sinon, demander un nom d'affichage personnalisé
-            context.user_data['temp_channel_username'] = channel_username
-            context.user_data['temp_channel_display_name'] = display_name
-            
-            await update.message.reply_text(
-                f"✅ Nom d'utilisateur enregistré: @{channel_username}\n\n"
-                f"Nom par défaut: **{display_name}**\n\n"
-                f"Voulez-vous utiliser ce nom ou en choisir un autre?\n"
-                f"Tapez un nouveau nom ou envoyez 'OK' pour garder '{display_name}':",
-                parse_mode='Markdown'
-            )
-            
-            return WAITING_CHANNEL_INFO  # Attendre confirmation ou nouveau nom
-        
-        # Si on arrive ici, c'est pour la confirmation/modification du nom d'affichage
-        temp_username = context.user_data.get('temp_channel_username')
-        temp_display_name = context.user_data.get('temp_channel_display_name')
-        
-        if temp_username:
-            # Si l'utilisateur tape "OK", garder le nom par défaut
-            if user_input.upper() == 'OK' and temp_display_name:
-                final_display_name = temp_display_name
-            else:
-                # Sinon utiliser le nouveau nom fourni
-                final_display_name = user_input.strip()
-            
-            # Enregistrer le canal
-            db_manager = DatabaseManager()
-            
+            # Auto-use default channel name/title without prompting
+            final_display_name = display_name or channel_username
             try:
-                db_manager.add_channel(final_display_name, temp_username, user_id)
-                context.user_data.pop('temp_channel_username', None)
-                context.user_data.pop('temp_channel_display_name', None)
-                
+                chat_ident = f"@{channel_username}" if not channel_username.startswith('@') else channel_username
+                chat = await context.bot.get_chat(chat_ident)
+                if getattr(chat, 'title', None):
+                    final_display_name = chat.title
+            except Exception:
+                pass
+
+            try:
+                db_manager.add_channel(final_display_name, channel_username, user_id)
                 await update.message.reply_text(
-                    f"✅ Canal ajouté avec succès !\n\n"
-                    f"📺 **{final_display_name}** (@{temp_username})",
+                    f"✅ Channel added successfully!\n\n"
+                    f"📺 **{final_display_name}** (@{channel_username})",
                     reply_markup=InlineKeyboardMarkup([
                         [InlineKeyboardButton("📋 Gérer les canaux", callback_data="manage_channels")],
                         [InlineKeyboardButton("↩️ Menu principal", callback_data="main_menu")]
                     ]),
                     parse_mode='Markdown'
                 )
-                
                 return SETTINGS
-                
             except Exception as e:
-                logger.error(f"Erreur lors de l'ajout du canal: {e}")
+                logger.error(f"Error adding channel: {e}")
                 await update.message.reply_text(
-                    "❌ Erreur lors de l'ajout du canal.",
+                    "❌ Error adding channel.",
                     reply_markup=InlineKeyboardMarkup([
                         [InlineKeyboardButton("🔄 Réessayer", callback_data="add_channel")],
                         [InlineKeyboardButton("↩️ Retour", callback_data="manage_channels")]
@@ -452,9 +428,11 @@ async def handle_channel_info(update: Update, context: ContextTypes.DEFAULT_TYPE
                 )
                 return SETTINGS
         
+        # If we reach here, no add-channel context remains; redirect back
+        
         # Si aucun contexte, rediriger vers les paramètres
         await update.message.reply_text(
-            "❌ Aucune configuration en cours.",
+            "❌ No configuration in progress.",
             reply_markup=InlineKeyboardMarkup([
                 [InlineKeyboardButton("⚙️ Paramètres", callback_data="settings")],
                 [InlineKeyboardButton("↩️ Menu principal", callback_data="main_menu")]
@@ -463,9 +441,9 @@ async def handle_channel_info(update: Update, context: ContextTypes.DEFAULT_TYPE
         return SETTINGS
         
     except Exception as e:
-        logger.error(f"Erreur dans handle_channel_info: {e}")
+        logger.error(f"Error in handle_channel_info: {e}")
         await update.message.reply_text(
-            "❌ Une erreur est survenue.",
+            "❌ An error occurred.",
             reply_markup=InlineKeyboardMarkup([
                 [InlineKeyboardButton("↩️ Menu principal", callback_data="main_menu")]
             ])
@@ -497,21 +475,35 @@ async def handle_post_content(update: Update, context: ContextTypes.DEFAULT_TYPE
         logger.info(f"Canal sélectionné: {selected_channel}")
         
         if not selected_channel:
-            logger.info("❌ Aucun canal sélectionné")
+            logger.info("❌ No channel selected")
             await update.message.reply_text(
-                "❌ Aucun canal sélectionné. Veuillez d'abord sélectionner un canal.",
-                reply_markup=InlineKeyboardMarkup([[
-                    InlineKeyboardButton("🔄 Sélectionner un canal", callback_data="create_publication")
+                "❌ No channel selected. Please select a channel first.",
+                reply_markup=InlineKeyboardMarkup([[ 
+                    InlineKeyboardButton("🔄 Select a channel", callback_data="create_publication")
                 ]])
             )
             return MAIN_MENU
         
         # Limite de 24 posts
-        if len(posts) >= 24:
-            logger.info("❌ Limite de 24 posts atteinte")
-            await update.message.reply_text(
-                "❌ Limite de 24 posts atteinte. Envoyez les posts actuels ou supprimez-en quelques-uns."
-            )
+        if len(posts) >= 15:
+            logger.info("❌ Limit of 15 posts reached")
+            try:
+                warn = await update.message.reply_text(
+                    "❌ Limit of 15 posts reached. Send current posts or delete some."
+                )
+                # Auto-suppression après 2 secondes
+                try:
+                    from handlers.callback_handlers import schedule_auto_destruction
+                    schedule_auto_destruction(context, warn.chat_id, warn.message_id, 2)
+                except Exception:
+                    # Fallback simple si job_queue non dispo
+                    try:
+                        await asyncio.sleep(2)
+                        await context.bot.delete_message(chat_id=warn.chat_id, message_id=warn.message_id)
+                    except Exception:
+                        pass
+            except Exception:
+                pass
             return WAITING_PUBLICATION_CONTENT
         
         # Déterminer le type de contenu et créer le post
@@ -528,164 +520,25 @@ async def handle_post_content(update: Update, context: ContextTypes.DEFAULT_TYPE
                 'caption': None
             })
         elif update.message.photo:
-            logger.info("🖼️ Type: Photo")
+            logger.info("🖼️ Type: Photo - quick recording without download")
             photo = update.message.photo[-1]
-            # Sauvegarde locale immédiate avec fallback
-            try:
-                file_obj = await context.bot.get_file(photo.file_id)
-                local_path = await file_obj.download_to_drive(f"downloads/photo_{photo.file_id}.jpg")
-            except Exception as e:
-                error_str = str(e)
-                if "File is too big" in error_str or "file is too big" in error_str.lower():
-                    try:
-                        from utils.clients import client_manager
-                        client_info = await client_manager.get_best_client(photo.file_size or 0, "download")
-                        client = client_info["client"]
-                        client_type = client_info["type"]
-                        import time
-                        user_id = update.effective_user.id
-                        if client_type == "pyrogram":
-                            local_path = await client.download_media(
-                                photo.file_id,
-                                file_name=f"downloads/photo_{photo.file_id}_{int(time.time())}.jpg"
-                            )
-                        elif client_type == "telethon":
-                            local_path = await client.download_media(
-                                photo.file_id,
-                                file=f"downloads/photo_{photo.file_id}_{int(time.time())}.jpg"
-                            )
-                        else:
-                            raise Exception("Aucun client avancé disponible")
-                    except Exception as client_error:
-                        logger.error(f"❌ Impossible de télécharger la photo via client avancé: {client_error}")
-                        await update.message.reply_text(
-                            "❌ Impossible de sauvegarder cette photo (trop volumineuse ou inaccessible). Merci de l'envoyer directement au bot, pas en forward.",
-                            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("↩️ Menu principal", callback_data="main_menu")]])
-                        )
-                        return MAIN_MENU
-                else:
-                    logger.error(f"❌ Erreur inattendue lors du téléchargement: {error_str}")
-                    await update.message.reply_text(
-                        "❌ Erreur inattendue lors de la sauvegarde de la photo.",
-                        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("↩️ Menu principal", callback_data="main_menu")]])
-                    )
-                    return MAIN_MENU
             post_data.update({
                 'type': 'photo',
                 'content': photo.file_id,
                 'caption': update.message.caption or '',
                 'file_size': photo.file_size or 0,
-                'local_path': local_path
+                'local_path': None
             })
         elif update.message.video:
-            logger.info("🎥 Type: Vidéo")
+            logger.info("🎥 Type: Video - quick recording without download")
             video = update.message.video
-            # ✅ SAUVEGARDE LOCALE AVEC GESTION FILE_REFERENCE_EXPIRED AMÉLIORÉE
-            local_path = None
-            try:
-                logger.info(f"📥 Tentative téléchargement vidéo via API Bot...")
-                file_obj = await context.bot.get_file(video.file_id)
-                local_path = await file_obj.download_to_drive(f"downloads/video_{video.file_id}.mp4")
-                logger.info(f"✅ Vidéo téléchargée via API Bot: {local_path}")
-            except Exception as e:
-                error_str = str(e)
-                logger.warning(f"⚠️ Échec API Bot: {error_str}")
-                
-                # ✅ GESTION SPÉCIFIQUE DES ERREURS
-                if ("File is too big" in error_str or "file is too big" in error_str.lower() or 
-                    "FILE_REFERENCE_EXPIRED" in error_str or "file reference" in error_str.lower()):
-                    
-                    logger.info("🔄 Fallback vers clients avancés...")
-                    try:
-                        from utils.clients import client_manager
-                        client_info = await client_manager.get_best_client(video.file_size or 0, "download")
-                        client = client_info["client"]
-                        client_type = client_info["type"]
-                        
-                        if not client:
-                            raise Exception("Aucun client avancé disponible")
-                            
-                        import time
-                        user_id = update.effective_user.id
-                        timestamp = int(time.time())
-                        
-                        logger.info(f"📥 Téléchargement via {client_type}...")
-                        
-                        if client_type == "pyrogram":
-                            local_path = await client.download_media(
-                                video.file_id,
-                                file_name=f"downloads/video_{user_id}_{timestamp}.mp4"
-                            )
-                        elif client_type == "telethon":
-                            local_path = await client.download_media(
-                                video.file_id,
-                                file=f"downloads/video_{user_id}_{timestamp}.mp4"
-                            )
-                        else:
-                            raise Exception(f"Client {client_type} non supporté")
-                            
-                        if not local_path or not os.path.exists(local_path) or os.path.getsize(local_path) == 0:
-                            raise Exception("Fichier téléchargé invalide ou vide")
-                            
-                        logger.info(f"✅ Vidéo téléchargée via {client_type}: {local_path}")
-                        
-                    except Exception as client_error:
-                        logger.error(f"❌ Échec téléchargement avancé: {client_error}")
-                        await update.message.reply_text(
-                            f"❌ **Impossible de sauvegarder cette vidéo**\n\n"
-                            f"**Cause possible :**\n"
-                            f"• Fichier transféré (forward) avec file_id expiré\n"
-                            f"• Fichier trop volumineux\n"
-                            f"• Fichier corrompu\n\n"
-                            f"**💡 Solutions :**\n"
-                            f"• Envoyez le fichier directement (pas en forward)\n"
-                            f"• Vérifiez que le fichier n'est pas corrompu\n"
-                            f"• Réduisez la taille si nécessaire\n\n"
-                            f"**Détails technique :** {client_error}",
-                            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("↩️ Menu principal", callback_data="main_menu")]]),
-                            parse_mode='Markdown'
-                        )
-                        return MAIN_MENU
-                else:
-                    logger.error(f"❌ Erreur inattendue lors du téléchargement: {error_str}")
-                    await update.message.reply_text(
-                        f"❌ **Erreur lors de la sauvegarde de la vidéo**\n\n"
-                        f"**Erreur :** {error_str}\n\n"
-                        f"Veuillez réessayer ou contacter le support.",
-                        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("↩️ Menu principal", callback_data="main_menu")]]),
-                        parse_mode='Markdown'
-                    )
-                    return MAIN_MENU
-                    
-            # ✅ VALIDATION FINALE DU FICHIER TÉLÉCHARGÉ
-            if not local_path or not os.path.exists(local_path):
-                logger.error("❌ Aucun fichier vidéo téléchargé")
-                await update.message.reply_text(
-                    "❌ Impossible de traiter cette vidéo. Veuillez réessayer.",
-                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("↩️ Menu principal", callback_data="main_menu")]])
-                )
-                return MAIN_MENU
-                
-            file_size_check = os.path.getsize(local_path)
-            if file_size_check == 0:
-                logger.error("❌ Fichier vidéo téléchargé vide")
-                try:
-                    os.remove(local_path)
-                except:
-                    pass
-                await update.message.reply_text(
-                    "❌ Le fichier vidéo téléchargé est vide. Veuillez renvoyer le fichier.",
-                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("↩️ Menu principal", callback_data="main_menu")]])
-                )
-                return MAIN_MENU
-                
             post_data.update({
                 'type': 'video',
                 'content': video.file_id,
                 'caption': update.message.caption or '',
-                'file_size': video.file_size or file_size_check,
+                'file_size': video.file_size or 0,
                 'duration': video.duration or 0,
-                'local_path': local_path
+                'local_path': None
             })
             
         elif update.message.document:
@@ -703,10 +556,10 @@ async def handle_post_content(update: Update, context: ContextTypes.DEFAULT_TYPE
                 'local_path': None  # Pas de téléchargement
             })
             
-            logger.info(f"✅ Document ajouté instantanément - {filename}")
+            logger.info(f"✅ Document added instantly - {filename}")
         else:
-            logger.info("❌ Type de fichier non supporté")
-            await update.message.reply_text("❌ Type de fichier non supporté.")
+            logger.info("❌ Unsupported file type")
+            await update.message.reply_text("❌ Unsupported file type.")
             return WAITING_PUBLICATION_CONTENT
         
         # Ajouter le post à la liste
@@ -714,7 +567,7 @@ async def handle_post_content(update: Update, context: ContextTypes.DEFAULT_TYPE
         posts.append(post_data)
         context.user_data['posts'] = posts
         
-        logger.info(f"✅ Post ajouté - Index: {post_index}, Total posts: {len(posts)}")
+        logger.info(f"✅ Post added - Index: {post_index}, Total posts: {len(posts)}")
         
         # Renvoyer le contenu avec les boutons de modification
         await _send_post_with_buttons(update, context, post_index, post_data)
@@ -723,10 +576,10 @@ async def handle_post_content(update: Update, context: ContextTypes.DEFAULT_TYPE
         return WAITING_PUBLICATION_CONTENT
         
     except Exception as e:
-        logger.error(f"❌ ERREUR dans handle_post_content: {e}")
+        logger.error(f"❌ ERROR in handle_post_content: {e}")
         logger.exception("Traceback complet:")
         await update.message.reply_text(
-            "❌ Une erreur est survenue lors du traitement du contenu.",
+            "❌ An error occurred while processing the content.",
             reply_markup=InlineKeyboardMarkup([[
                 InlineKeyboardButton("↩️ Menu principal", callback_data="main_menu")
             ]])
@@ -776,28 +629,36 @@ async def _send_post_with_buttons(update: Update, context: ContextTypes.DEFAULT_
                 reply_markup=reply_markup
             )
         
-        # Stocker l'ID du message pour pouvoir le supprimer plus tard
+        # Stocker l'aperçu initial pour pouvoir le remplacer à la prochaine modification
         if sent_message:
+            # Ancien stockage (conservé si utilisé ailleurs)
             context.user_data['original_file_message_id'] = sent_message.message_id
+            # Nouveau stockage standardisé
+            if 'preview_messages' not in context.user_data:
+                context.user_data['preview_messages'] = {}
+            context.user_data['preview_messages'][post_index] = {
+                'message_id': sent_message.message_id,
+                'chat_id': update.effective_chat.id
+            }
         
         # Message de statut discret avec actions globales
         total_posts = len(context.user_data.get('posts', []))
         
-        # Clavier reply (boutons en bas de l'écran)
+        # Clavier reply (bottom buttons)
         reply_keyboard = ReplyKeyboardMarkup([
-            ["📋 Aperçu", "🚀 Envoyer"],
-            ["🗑️ Tout supprimer", "❌ Annuler"]
+            ["📋 Preview", "🚀 Send"],
+            ["🗑️ Delete all", "❌ Cancel"]
         ], resize_keyboard=True, one_time_keyboard=False)
         
         await update.message.reply_text(
-            f"✅ {total_posts}/24 • Canal: {post_data['channel_name']}",
+            f"✅ {total_posts}/15 • Channel: {post_data['channel_name']}",
             reply_markup=reply_keyboard
         )
         
     except Exception as e:
-        logger.error(f"Erreur dans _send_post_with_buttons: {e}")
+        logger.error(f"Error in _send_post_with_buttons: {e}")
         await update.message.reply_text(
-            f"✅ Post {post_index + 1} ajouté mais erreur d'affichage. Utilisez le clavier pour continuer."
+            f"✅ Post {post_index + 1} added but display error. Use the keyboard to continue."
         )
 
 

@@ -5,7 +5,7 @@ import os
 import logging
 from typing import Optional, Dict, Any
 from utils.clients import client_manager
-from handlers.thumbnail import handle_thumbnail_pyrogram
+# from handlers.thumbnail import handle_thumbnail_pyrogram  # Removed if thumbnail.py is deprecated
 from config import settings
 
 logger = logging.getLogger(__name__)
@@ -17,7 +17,10 @@ async def send_file_smart(
     thumb_id: Optional[str] = None,
     file_name: Optional[str] = None,
     force_document: bool = False,
-    context = None
+    context = None,
+    progress_chat_id: Optional[int] = None,
+    progress_message_id: Optional[int] = None,
+    progress_prefix: str = ""
 ) -> Dict[str, Any]:
     """
     Envoie un fichier en utilisant le meilleur client disponible.
@@ -40,46 +43,73 @@ async def send_file_smart(
             raise Exception("Chemin de fichier manquant")
             
         if not os.path.exists(file_path):
-            raise Exception(f"Fichier introuvable: {file_path}")
+            raise Exception(f"File not found: {file_path}")
             
         if not os.path.isfile(file_path):
-            raise Exception(f"Le chemin ne pointe pas vers un fichier: {file_path}")
+            raise Exception(f"Path does not point to a file: {file_path}")
             
         if not os.access(file_path, os.R_OK):
-            raise Exception(f"Fichier non lisible: {file_path}")
+            raise Exception(f"File not readable: {file_path}")
             
         # Vérifier la taille du fichier
         try:
+            # Message de progression (optionnel)
+            progress_chat = None
+            progress_msg_id = None
+            if progress_chat_id and progress_message_id:
+                progress_chat = progress_chat_id
+                progress_msg_id = progress_message_id
+                try:
+                    await context.bot.edit_message_text(chat_id=progress_chat, message_id=progress_msg_id, text=f"⏳ {progress_prefix}Preparing…")
+                except Exception:
+                    pass
+            elif progress_chat_id:
+                try:
+                    msg = await context.bot.send_message(progress_chat_id, f"⏳ {progress_prefix}Preparing…")
+                    progress_chat = msg.chat_id
+                    progress_msg_id = msg.message_id
+                except Exception:
+                    progress_chat = None
+                    progress_msg_id = None
             file_size = os.path.getsize(file_path)
         except OSError as e:
-            raise Exception(f"Impossible de lire la taille du fichier: {e}")
+            raise Exception(f"Unable to read file size: {e}")
             
         if file_size == 0:
-            raise Exception(f"Le fichier est vide (0 B): {file_path}")
+            raise Exception(f"File is empty (0 B): {file_path}")
             
         if file_size > 2000 * 1024 * 1024:  # 2GB limite Telegram
-            raise Exception(f"Fichier trop volumineux ({file_size/1024/1024:.1f} MB > 2GB)")
+            raise Exception(f"File too large ({file_size/1024/1024:.1f} MB > 2GB)")
             
-        logger.info(f"📤 VALIDATION OK - Fichier: {file_path} ({file_size/1024/1024:.1f} MB)")
+        logger.info(f"📤 VALIDATION OK - File: {file_path} ({file_size/1024/1024:.1f} MB)")
 
         # Déterminer le type de fichier
         file_extension = os.path.splitext(file_path)[1].lower()
         is_photo = file_extension in ['.jpg', '.jpeg', '.png', '.gif', '.webp']
         is_video = file_extension in ['.mp4', '.avi', '.mov', '.mkv', '.webm']
+        # Si l'extension du chemin n'est pas parlante, utiliser le nom fichier demandé
+        if not is_photo and not is_video and file_name:
+            name_ext = os.path.splitext(file_name)[1].lower()
+            if name_ext in ['.jpg', '.jpeg', '.png', '.gif', '.webp']:
+                is_photo = True
+            elif name_ext in ['.mp4', '.avi', '.mov', '.mkv', '.webm']:
+                is_video = True
         
-        # ✅ PRÉPARATION SÉCURISÉE DU THUMBNAIL
+        # ✅ SAFE THUMBNAIL PREPARATION
         thumb_path = None
         if thumb_id:
-            logger.info(f"🖼️ Préparation du thumbnail: {thumb_id[:30] if len(thumb_id) > 30 else thumb_id}...")
+            logger.info(f"🖼️ Preparing thumbnail: {thumb_id[:30] if len(thumb_id) > 30 else thumb_id}...")
             try:
-                thumb_path = await handle_thumbnail_pyrogram(thumb_id, context=context)
+                # If you keep thumbnail.py, re-enable the import and the call.
+                # thumb_path = await handle_thumbnail_pyrogram(thumb_id, context=context)
+                thumb_path = None
                 if thumb_path and os.path.exists(thumb_path) and os.path.getsize(thumb_path) > 0:
-                    logger.info(f"✅ Thumbnail préparé: {thumb_path}")
+                    logger.info(f"✅ Thumbnail prepared: {thumb_path}")
                 else:
-                    logger.warning("⚠️ Thumbnail préparé mais fichier invalide")
+                    logger.warning("⚠️ Thumbnail prepared but invalid file")
                     thumb_path = None
             except Exception as thumb_error:
-                logger.warning(f"⚠️ Erreur thumbnail (continuant sans): {thumb_error}")
+                logger.warning(f"⚠️ Thumbnail error (continuing without): {thumb_error}")
                 thumb_path = None
 
         try:
@@ -98,13 +128,52 @@ async def send_file_smart(
 
             # ✅ ENVOI AVEC GESTION D'ERREURS ROBUSTE ET FALLBACK
             try:
-                if client_type == "pyrogram":
+                # Pyrogram uniquement
+                message = await _send_with_pyrogram(
+                    client, chat_id, file_path, caption, thumb_path, file_name, 
+                    is_photo, is_video, force_document
+                )
+                
+                file_id = None
+                if message.photo:
+                    file_id = message.photo.file_id
+                elif message.video:
+                    file_id = message.video.file_id
+                elif message.document:
+                    file_id = message.document.file_id
+                
+                result = {
+                    "success": True,
+                    "message_id": message.id,
+                    "file_id": file_id,
+                    "client": "pyrogram"
+                }
+                if progress_chat and progress_msg_id:
+                    try:
+                        await context.bot.edit_message_text(chat_id=progress_chat, message_id=progress_msg_id, text=f"✅ {progress_prefix}Terminé")
+                    except Exception:
+                        pass
+                return result
+                    
+            except Exception as send_error:
+                error_str = str(send_error)
+                logger.warning(f"⚠️ Échec envoi avec {client_type}: {error_str}")
+                
+                # ✅ GESTION DES ERREURS SPÉCIFIQUES AVEC FALLBACK
+                if progress_chat and progress_msg_id:
+                    try:
+                        await context.bot.edit_message_text(progress_chat, progress_msg_id, f"🔁 {progress_prefix}Nouvelle tentative…")
+                    except Exception:
+                        pass
+                if "Peer id invalid" in error_str or "peer id invalid" in error_str.lower():
+                    await client_manager.handle_peer_error(client_type, send_error)
+                    # Réessayer une fois avec un nouveau client Pyrogram
+                    fallback_client_info = await client_manager.get_best_client(file_size, "upload")
+                    fallback_client = fallback_client_info["client"]
                     message = await _send_with_pyrogram(
-                        client, chat_id, file_path, caption, thumb_path, file_name, 
+                        fallback_client, chat_id, file_path, caption, thumb_path, file_name, 
                         is_photo, is_video, force_document
                     )
-                    
-                    # Extraire le file_id selon le type de média
                     file_id = None
                     if message.photo:
                         file_id = message.photo.file_id
@@ -112,127 +181,38 @@ async def send_file_smart(
                         file_id = message.video.file_id
                     elif message.document:
                         file_id = message.document.file_id
-                    
-                    return {
-                        "success": True,
-                        "message_id": message.id,
-                        "file_id": file_id,
-                        "client": "pyrogram"
-                    }
-
-                elif client_type == "telethon":
-                    message = await _send_with_telethon(
-                        client, chat_id, file_path, caption, thumb_path, file_name, 
-                        is_photo, is_video, force_document
-                    )
-                    
-                    # Pour Telethon, essayer de récupérer le file_id
-                    file_id = None
-                    try:
-                        # Note: Récupération file_id simplifiée pour éviter les erreurs
-                        file_id = f"telethon_msg_{message.id}"  # Fallback temporaire
-                    except Exception as fwd_error:
-                        logger.warning(f"⚠️ Impossible de récupérer le file_id: {fwd_error}")
-                    
-                    return {
-                        "success": True,
-                        "message_id": message.id,
-                        "file_id": file_id,
-                        "client": "telethon"
-                    }
-                    
-                else:
-                    raise Exception(f"Type de client non supporté: {client_type}")
-                    
-            except Exception as send_error:
-                error_str = str(send_error)
-                logger.warning(f"⚠️ Échec envoi avec {client_type}: {error_str}")
-                
-                # ✅ GESTION DES ERREURS SPÉCIFIQUES AVEC FALLBACK
-                if "Peer id invalid" in error_str or "peer id invalid" in error_str.lower():
-                    # Gérer l'erreur Peer ID et essayer l'autre client
-                    await client_manager.handle_peer_error(client_type, send_error)
-                    
-                    # Essayer avec l'autre client
-                    try:
-                        fallback_client_type = "telethon" if client_type == "pyrogram" else "pyrogram"
-                        logger.info(f"🔄 Fallback vers {fallback_client_type} après erreur Peer ID")
-                        
-                        fallback_client_info = await client_manager.get_best_client(file_size, "upload")
-                        fallback_client = fallback_client_info["client"]
-                        
-                        if fallback_client and fallback_client_info["type"] == fallback_client_type:
-                            if fallback_client_type == "pyrogram":
-                                message = await _send_with_pyrogram(
-                                    fallback_client, chat_id, file_path, caption, thumb_path, file_name, 
-                                    is_photo, is_video, force_document
-                                )
-                                file_id = None
-                                if message.photo:
-                                    file_id = message.photo.file_id
-                                elif message.video:
-                                    file_id = message.video.file_id
-                                elif message.document:
-                                    file_id = message.document.file_id
-                                
-                                return {
-                                    "success": True,
-                                    "message_id": message.id,
-                                    "file_id": file_id,
-                                    "client": "pyrogram"
-                                }
-                            else:
-                                message = await _send_with_telethon(
-                                    fallback_client, chat_id, file_path, caption, thumb_path, file_name, 
-                                    is_photo, is_video, force_document
-                                )
-                                file_id = f"telethon_msg_{message.id}"
-                                
-                                return {
-                                    "success": True,
-                                    "message_id": message.id,
-                                    "file_id": file_id,
-                                    "client": "telethon"
-                                }
-                        else:
-                            raise Exception(f"Aucun client {fallback_client_type} disponible pour fallback")
-                            
-                    except Exception as fallback_error:
-                        logger.error(f"❌ Échec du fallback: {fallback_error}")
-                        raise Exception(f"Échec envoi {client_type} et fallback {fallback_client_type}: {send_error}")
+                    if progress_chat and progress_msg_id:
+                        try:
+                            await context.bot.edit_message_text(progress_chat, progress_msg_id, f"✅ {progress_prefix}Terminé")
+                        except Exception:
+                            pass
+                    return {"success": True, "message_id": message.id, "file_id": file_id, "client": "pyrogram"}
                 
                 elif "FILE_REFERENCE_EXPIRED" in error_str or "file reference" in error_str.lower():
                     raise Exception(f"Référence de fichier expirée: {error_str}")
                     
                 elif "File is too big" in error_str or "file is too big" in error_str.lower():
-                    # Essayer avec l'autre client si possible
-                    try:
-                        fallback_client_type = "telethon" if client_type == "pyrogram" else "pyrogram"
-                        logger.info(f"🔄 Fallback vers {fallback_client_type} pour fichier volumineux")
-                        
-                        fallback_client_info = await client_manager.get_best_client(file_size, "upload")
-                        fallback_client = fallback_client_info["client"]
-                        
-                        if fallback_client and fallback_client_info["type"] == fallback_client_type:
-                            if fallback_client_type == "telethon":
-                                message = await _send_with_telethon(
-                                    fallback_client, chat_id, file_path, caption, thumb_path, file_name, 
-                                    is_photo, is_video, force_document
-                                )
-                                file_id = f"telethon_msg_{message.id}"
-                                
-                                return {
-                                    "success": True,
-                                    "message_id": message.id,
-                                    "file_id": file_id,
-                                    "client": "telethon"
-                                }
-                        
-                        raise Exception("Aucun client alternatif disponible")
-                        
-                    except Exception as big_file_fallback_error:
-                        logger.error(f"❌ Échec fallback fichier volumineux: {big_file_fallback_error}")
-                        raise Exception(f"Fichier trop volumineux pour tous les clients: {error_str}")
+                    # Recréer/relancer Pyrogram et retenter
+                    logger.info("🔄 Re-tentative Pyrogram pour gros fichier")
+                    fallback_client_info = await client_manager.get_best_client(file_size, "upload")
+                    fallback_client = fallback_client_info["client"]
+                    message = await _send_with_pyrogram(
+                        fallback_client, chat_id, file_path, caption, thumb_path, file_name, 
+                        is_photo, is_video, force_document
+                    )
+                    file_id = None
+                    if message.photo:
+                        file_id = message.photo.file_id
+                    elif message.video:
+                        file_id = message.video.file_id
+                    elif message.document:
+                        file_id = message.document.file_id
+                    if progress_chat and progress_msg_id:
+                        try:
+                            await context.bot.edit_message_text(progress_chat, progress_msg_id, f"✅ {progress_prefix}Terminé")
+                        except Exception:
+                            pass
+                    return {"success": True, "message_id": message.id, "file_id": file_id, "client": "pyrogram"}
                 
                 else:
                     # Autres erreurs - les relancer directement
@@ -255,13 +235,13 @@ async def send_file_smart(
         
         # ✅ MESSAGES D'ERREUR DÉTAILLÉS
         if "File size equals to 0 B" in error_msg or "fichier est vide" in error_msg:
-            error_msg = "Le fichier est vide ou corrompu. Veuillez renvoyer le fichier."
-        elif "Fichier introuvable" in error_msg:
-            error_msg = "Le fichier n'existe plus sur le serveur. Veuillez le renvoyer."
-        elif "trop volumineux" in error_msg:
-            error_msg = "Le fichier dépasse la limite de 2GB de Telegram."
-        elif "non lisible" in error_msg:
-            error_msg = "Impossible de lire le fichier. Vérifiez les permissions."
+            error_msg = "The file is empty or corrupted. Please resend the file."
+        elif "Fichier introuvable" in error_msg or "File not found" in error_msg:
+            error_msg = "The file no longer exists on the server. Please resend it."
+        elif "trop volumineux" in error_msg or "too large" in error_msg:
+            error_msg = "The file exceeds Telegram's 2GB limit."
+        elif "non lisible" in error_msg or "not readable" in error_msg:
+            error_msg = "Unable to read the file. Check permissions."
         
         return {
             "success": False,
@@ -275,22 +255,24 @@ async def _send_with_pyrogram(client, chat_id, file_path, caption, thumb_path, f
     try:
         # ✅ VALIDATION SUPPLÉMENTAIRE AVANT ENVOI
         if not os.path.exists(file_path):
-            raise Exception(f"Fichier inexistant pour Pyrogram: {file_path}")
+            raise Exception(f"Missing file for Pyrogram: {file_path}")
             
         file_size = os.path.getsize(file_path)
         if file_size == 0:
-            raise Exception(f"Fichier vide pour Pyrogram: {file_path}")
+            raise Exception(f"Empty file for Pyrogram: {file_path}")
             
         if not os.access(file_path, os.R_OK):
-            raise Exception(f"Fichier non lisible pour Pyrogram: {file_path}")
+            raise Exception(f"Unreadable file for Pyrogram: {file_path}")
             
         logger.info(f"📤 Pyrogram: Envoi {file_path} ({file_size/1024/1024:.1f} MB)")
         
         # ✅ GESTION SÉCURISÉE DU THUMBNAIL
         thumb_kwargs = {}
         if thumb_path and os.path.exists(thumb_path) and os.path.getsize(thumb_path) > 0:
+            # Important: Pyrogram n'accepte pas 'thumb' sur send_photo; on n'ajoute la miniature
+            # que pour les envois en document/vidéo.
             thumb_kwargs["thumb"] = thumb_path
-            logger.info(f"🖼️ Pyrogram: Thumbnail ajouté: {thumb_path}")
+            logger.info(f"🖼️ Pyrogram: Thumbnail prepared: {thumb_path}")
         
         # ✅ ENVOI SELON LE TYPE AVEC GESTION D'ERREURS
         if is_photo and not force_document:
@@ -298,7 +280,7 @@ async def _send_with_pyrogram(client, chat_id, file_path, caption, thumb_path, f
                 "chat_id": chat_id,
                 "photo": file_path,
                 "caption": caption,
-                **thumb_kwargs
+                # Pas de thumbnail custom pour les photos
             }
             if file_name:
                 kwargs["file_name"] = file_name
@@ -312,6 +294,7 @@ async def _send_with_pyrogram(client, chat_id, file_path, caption, thumb_path, f
                 "chat_id": chat_id,
                 "video": file_path,
                 "caption": caption,
+                "supports_streaming": True,
                 **thumb_kwargs
             }
             if file_name:
@@ -342,109 +325,15 @@ async def _send_with_pyrogram(client, chat_id, file_path, caption, thumb_path, f
         
         # ✅ MESSAGES D'ERREUR SPÉCIFIQUES
         if "Fichier vide" in error_str:
-            raise Exception("Le fichier à envoyer est vide (0 B). Vérifiez le fichier source.")
+            raise Exception("The file to send is empty (0 B). Check the source file.")
         elif "Fichier inexistant" in error_str:
-            raise Exception("Le fichier à envoyer n'existe pas. Vérifiez le chemin.")
+            raise Exception("The file to send does not exist. Check the path.")
         elif "Fichier non lisible" in error_str:
-            raise Exception("Impossible de lire le fichier. Vérifiez les permissions.")
+            raise Exception("Unable to read the file. Check permissions.")
         else:
             raise Exception(f"Erreur envoi Pyrogram: {error_str}")
 
-async def _send_with_telethon(client, chat_id, file_path, caption, thumb_path, file_name, is_photo, is_video, force_document):
-    """Envoi avec Telethon avec gestion d'erreurs et validation"""
-    try:
-        # ✅ VALIDATION SUPPLÉMENTAIRE AVANT ENVOI
-        if not os.path.exists(file_path):
-            raise Exception(f"Fichier inexistant pour Telethon: {file_path}")
-            
-        file_size = os.path.getsize(file_path)
-        if file_size == 0:
-            raise Exception(f"Fichier vide pour Telethon: {file_path}")
-            
-        if not os.access(file_path, os.R_OK):
-            raise Exception(f"Fichier non lisible pour Telethon: {file_path}")
-            
-        logger.info(f"📤 Telethon: Envoi {file_path} ({file_size/1024/1024:.1f} MB)")
-        
-        # ✅ GESTION SÉCURISÉE DU THUMBNAIL
-        thumb_to_use = None
-        if thumb_path and os.path.exists(thumb_path) and os.path.getsize(thumb_path) > 0:
-            thumb_to_use = thumb_path
-            logger.info(f"🖼️ Telethon: Thumbnail ajouté: {thumb_path}")
-        
-        # ✅ ENVOI UNIFIÉ AVEC TELETHON
-        try:
-            if is_photo and not force_document:
-                message = await client.send_file(
-                    chat_id,
-                    file_path,
-                    caption=caption,
-                    thumb=thumb_to_use,
-                    filename=file_name if file_name else None,
-                    force_document=False
-                )
-                logger.info("✅ Photo envoyée via Telethon")
-                return message
-                
-            elif is_video and not force_document:
-                message = await client.send_file(
-                    chat_id,
-                    file_path,
-                    caption=caption,
-                    thumb=thumb_to_use,
-                    filename=file_name if file_name else None,
-                    force_document=False
-                )
-                logger.info("✅ Vidéo envoyée via Telethon")
-                return message
-                
-            else:
-                message = await client.send_file(
-                    chat_id,
-                    file_path,
-                    caption=caption,
-                    thumb=thumb_to_use,
-                    force_document=True,
-                    filename=file_name if file_name else None
-                )
-                logger.info("✅ Document envoyé via Telethon")
-                return message
-                
-        except Exception as send_error:
-            send_error_str = str(send_error)
-            
-            # ✅ GESTION SPÉCIFIQUE DES ERREURS TELETHON
-            if "File size equals to 0 B" in send_error_str:
-                # Réessayer avec une approche différente
-                logger.warning("⚠️ Telethon: Erreur taille 0B, tentative avec force_document=True")
-                message = await client.send_file(
-                    chat_id,
-                    file_path,
-                    caption=caption,
-                    thumb=thumb_to_use,
-                    force_document=True,
-                    filename=file_name or os.path.basename(file_path)
-                )
-                logger.info("✅ Document envoyé via Telethon (force_document)")
-                return message
-            else:
-                raise send_error
-            
-    except Exception as e:
-        error_str = str(e)
-        logger.error(f"❌ Erreur Telethon: {error_str}")
-        
-        # ✅ MESSAGES D'ERREUR SPÉCIFIQUES
-        if "Fichier vide" in error_str:
-            raise Exception("Le fichier à envoyer est vide (0 B). Vérifiez le fichier source.")
-        elif "Fichier inexistant" in error_str:
-            raise Exception("Le fichier à envoyer n'existe pas. Vérifiez le chemin.")
-        elif "Fichier non lisible" in error_str:
-            raise Exception("Impossible de lire le fichier. Vérifiez les permissions.")
-        elif "File size equals to 0 B" in error_str:
-            raise Exception("Erreur de taille de fichier détectée par Telethon. Le fichier pourrait être corrompu.")
-        else:
-            raise Exception(f"Erreur envoi Telethon: {error_str}")
+# Telethon supprimé: envoi géré uniquement via Pyrogram
 
 async def edit_message_media(
     chat_id: int,
@@ -467,7 +356,7 @@ async def edit_message_media(
     try:
         # ✅ VALIDATION DU FICHIER
         if not os.path.exists(file_path) or os.path.getsize(file_path) == 0:
-            logger.error(f"Fichier invalide pour édition: {file_path}")
+            logger.error(f"Invalid file for editing: {file_path}")
             return False
             
         # Utiliser Pyrogram pour la modification (meilleur support)

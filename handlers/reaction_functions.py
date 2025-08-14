@@ -189,15 +189,19 @@ async def add_reactions_to_post(update: Update, context: ContextTypes.DEFAULT_TY
         context.user_data['current_post_index'] = post_index
         context.user_data['waiting_for_reactions'] = True
         
-        # Demander les réactions à l'utilisateur
-        # Envoyer un nouveau message au lieu d'éditer (pour compatibilité avec les médias)
-        await context.bot.send_message(
+        # Demander les réactions à l'utilisateur et mémoriser le prompt pour nettoyage
+        prompt = await context.bot.send_message(
             chat_id=update.effective_chat.id,
             text="📝 Envoyez-moi les réactions séparées par des '/'.\n"
                  "Exemple: 👍/❤️/🔥/😂\n\n"
                  "Maximum 8 réactions autorisées.",
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("↩️ Annuler", callback_data="main_menu")]])
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Annuler", callback_data="cancel_waiting_reactions")]])
         )
+        context.user_data['reaction_input_ctx'] = {
+            'prompt_chat_id': prompt.chat_id,
+            'prompt_message_id': prompt.message_id,
+            'post_index': post_index
+        }
         
         return WAITING_REACTION_INPUT
         
@@ -244,13 +248,15 @@ async def add_url_button_to_post(update: Update, context: ContextTypes.DEFAULT_T
         
         # Demander le bouton URL à l'utilisateur
         # Envoyer un nouveau message au lieu d'éditer (pour compatibilité avec les médias)
-        await context.bot.send_message(
+        ask_msg = await context.bot.send_message(
             chat_id=update.effective_chat.id,
             text="📝 Envoyez-moi le bouton URL au format :\n"
                  "Texte du bouton | URL\n\n"
                  "Exemple : Visiter le site | https://example.com",
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("↩️ Annuler", callback_data="main_menu")]])
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Annuler", callback_data="cancel_waiting_url")]])
         )
+        # Mémoriser pour suppression
+        context.user_data['last_prompt_message_id'] = ask_msg.message_id
         
         return WAITING_URL_INPUT
         
@@ -299,6 +305,14 @@ async def handle_reaction_input(update, context):
         context.user_data['posts'][post_index]['reactions'] = reactions
         logger.info(f"✅ Réactions ajoutées au post {post_index}: {reactions}")
         logger.info(f"✅ Post complet après ajout: {context.user_data['posts'][post_index]}")
+        # Supprimer le précédent aperçu si présent
+        prev = context.user_data.get('preview_messages', {}).get(post_index)
+        if prev:
+            try:
+                await context.bot.delete_message(chat_id=prev['chat_id'], message_id=prev['message_id'])
+            except Exception:
+                pass
+
         # Construction du nouveau clavier
         keyboard = []
         current_row = []
@@ -330,6 +344,15 @@ async def handle_reaction_input(update, context):
                 )
             except Exception:
                 pass
+        # Supprimer le précédent aperçu si présent
+        if 'preview_messages' in context.user_data:
+            prev = context.user_data['preview_messages'].get(post_index)
+            if prev:
+                try:
+                    await context.bot.delete_message(chat_id=prev['chat_id'], message_id=prev['message_id'])
+                except Exception:
+                    pass
+
         # Envoi du nouveau message avec les réactions
         post = context.user_data['posts'][post_index]
         sent_message = None
@@ -367,9 +390,17 @@ async def handle_reaction_input(update, context):
                 'message_id': sent_message.message_id,
                 'chat_id': update.effective_chat.id
             }
-        await update.message.reply_text(
-            "✅ Réactions ajoutées avec succès !\nVous pouvez continuer à m'envoyer des messages."
-        )
+        # Supprimer le prompt et le message utilisateur
+        ctx = context.user_data.pop('reaction_input_ctx', {})
+        try:
+            if ctx:
+                await context.bot.delete_message(ctx['prompt_chat_id'], ctx['prompt_message_id'])
+        except Exception:
+            pass
+        try:
+            await update.message.delete()
+        except Exception:
+            pass
         del context.user_data['waiting_for_reactions']
         del context.user_data['current_post_index']
         return WAITING_PUBLICATION_CONTENT
@@ -416,9 +447,23 @@ async def handle_url_input(update, context):
         })
         # Construction du nouveau clavier
         keyboard = []
-        if context.user_data['posts'][post_index].get('reactions'):
+        # Normaliser les réactions (peut être une liste ou une string JSON "[]")
+        reactions_val = context.user_data['posts'][post_index].get('reactions', [])
+        if isinstance(reactions_val, str):
+            try:
+                reactions_list = json.loads(reactions_val)
+                if not isinstance(reactions_list, list):
+                    reactions_list = []
+            except Exception:
+                reactions_list = []
+        else:
+            reactions_list = reactions_val or []
+
+        has_reactions = len(reactions_list) > 0
+
+        if has_reactions:
             current_row = []
-            for reaction in context.user_data['posts'][post_index]['reactions']:
+            for reaction in reactions_list:
                 current_row.append(InlineKeyboardButton(
                     f"{reaction}",
                     callback_data=f"react_{post_index}_{reaction}"
@@ -428,10 +473,18 @@ async def handle_url_input(update, context):
                     current_row = []
             if current_row:
                 keyboard.append(current_row)
+
         for btn in context.user_data['posts'][post_index]['buttons']:
             keyboard.append([InlineKeyboardButton(btn['text'], url=btn['url'])])
+
+        # Bouton réactions dynamique: ajouter si aucune réaction, supprimer si présentes
+        if has_reactions:
+            keyboard.append([InlineKeyboardButton("🗑️ Supprimer les réactions", callback_data=f"remove_reactions_{post_index}")])
+        else:
+            keyboard.append([InlineKeyboardButton("✨ Ajouter des réactions", callback_data=f"add_reactions_{post_index}")])
+
+        # Boutons annexes
         keyboard.extend([
-            [InlineKeyboardButton("🗑️ Supprimer les réactions", callback_data=f"remove_reactions_{post_index}")],
             [InlineKeyboardButton("Supprimer les boutons URL", callback_data=f"remove_url_buttons_{post_index}")],
             [InlineKeyboardButton("✏️ Edit File", callback_data=f"edit_file_{post_index}")],
             [InlineKeyboardButton("❌ Supprimer", callback_data=f"delete_post_{post_index}")]
@@ -482,9 +535,18 @@ async def handle_url_input(update, context):
                 'message_id': sent_message.message_id,
                 'chat_id': update.effective_chat.id
             }
-        await update.message.reply_text(
-            "✅ Bouton URL ajouté avec succès !\nVous pouvez continuer à m'envoyer des messages."
-        )
+        # Supprimer le prompt si présent
+        if context.user_data.get('last_prompt_message_id'):
+            try:
+                await context.bot.delete_message(chat_id=update.effective_chat.id, message_id=context.user_data['last_prompt_message_id'])
+            except Exception:
+                pass
+            context.user_data.pop('last_prompt_message_id', None)
+
+        try:
+            await update.message.delete()
+        except Exception:
+            pass
         del context.user_data['waiting_for_url']
         del context.user_data['current_post_index']
         return WAITING_PUBLICATION_CONTENT

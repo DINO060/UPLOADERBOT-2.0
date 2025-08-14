@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 
 
 class DatabaseError(Exception):
-    """Exception pour les erreurs de base de données"""
+    """Exception for database errors"""
     pass
 
 
@@ -25,19 +25,19 @@ class DatabaseManager:
     """
 
     def __init__(self):
-        """Initialise le gestionnaire de base de données"""
+        """Initializes the database manager"""
         self.db_path = settings.db_config["path"]
         self.connection = None
         self.setup_database()
 
     def setup_database(self) -> bool:
-        """Initialise la base de données et crée les tables nécessaires"""
+        """Initializes the database and creates necessary tables"""
         try:
             # Assurons-nous que le dossier parent existe
             db_dir = os.path.dirname(self.db_path)
             if db_dir and not os.path.exists(db_dir):
                 os.makedirs(db_dir, exist_ok=True)
-                logger.info(f"Dossier de base de données créé: {db_dir}")
+                logger.info(f"Database directory created: {db_dir}")
             
             self.connection = sqlite3.connect(
                 self.db_path,
@@ -90,32 +90,32 @@ class DatabaseManager:
             # Migration : Ajouter la colonne post_type si elle n'existe pas
             try:
                 cursor.execute("ALTER TABLE posts ADD COLUMN post_type TEXT")
-                logger.info("✅ Colonne post_type ajoutée à la table posts")
+                logger.info("✅ post_type column added to posts table")
             except sqlite3.OperationalError:
-                logger.info("ℹ️ Colonne post_type existe déjà")
+                logger.info("ℹ️ post_type column already exists")
             
             # Migration : Mettre à jour les posts existants sans post_type
             try:
                 cursor.execute("UPDATE posts SET post_type = 'text' WHERE post_type IS NULL")
                 updated_rows = cursor.rowcount
                 if updated_rows > 0:
-                    logger.info(f"✅ {updated_rows} posts mis à jour avec post_type = 'text'")
+                    logger.info(f"✅ {updated_rows} posts updated with post_type = 'text'")
             except sqlite3.OperationalError:
                 pass
 
             # Migration : Ajouter la colonne status si elle n'existe pas
             try:
                 cursor.execute("ALTER TABLE posts ADD COLUMN status TEXT")
-                logger.info("✅ Colonne status ajoutée à la table posts")
+                logger.info("✅ status column added to posts table")
             except sqlite3.OperationalError:
-                logger.info("ℹ️ Colonne status existe déjà")
+                logger.info("ℹ️ status column already exists")
             
             # Migration : Mettre à jour les posts existants sans status
             try:
                 cursor.execute("UPDATE posts SET status = 'pending' WHERE status IS NULL")
                 updated_rows = cursor.rowcount
                 if updated_rows > 0:
-                    logger.info(f"✅ {updated_rows} posts mis à jour avec status = 'pending'")
+                    logger.info(f"✅ {updated_rows} posts updated with status = 'pending'")
             except sqlite3.OperationalError:
                 pass
 
@@ -140,15 +140,25 @@ class DatabaseManager:
                 )
             ''')
 
+            # Table pour quotas/journalier et cooldown d'envoi
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS user_usage (
+                    user_id INTEGER PRIMARY KEY,
+                    daily_bytes INTEGER DEFAULT 0,
+                    last_reset TEXT,
+                    last_post_time TEXT
+                )
+            ''')
+
             self.connection.commit()
             return True
 
         except sqlite3.Error as e:
-            logger.error(f"Erreur lors de la configuration de la base de données: {e}")
-            raise DatabaseError(f"Erreur de configuration de la base de données: {e}")
+            logger.error(f"Error configuring database: {e}")
+            raise DatabaseError(f"Database configuration error: {e}")
 
     def check_database_status(self) -> Dict[str, bool]:
-        """Vérifie l'état de la base de données"""
+        """Checks database status"""
         try:
             cursor = self.connection.cursor()
 
@@ -158,12 +168,12 @@ class DatabaseManager:
 
             return {
                 "connection": self.connection is not None,
-                "tables": len(tables) >= 2,  # Au moins 2 tables (channels et posts)
+                "tables": len(tables) >= 2,  # At least 2 tables (channels and posts)
                 "writable": self._test_write()
             }
 
         except sqlite3.Error as e:
-            logger.error(f"Erreur lors de la vérification de la base de données: {e}")
+            logger.error(f"Error checking database: {e}")
             return {
                 "connection": False,
                 "tables": False,
@@ -171,7 +181,7 @@ class DatabaseManager:
             }
 
     def _test_write(self) -> bool:
-        """Teste si la base de données est accessible en écriture"""
+        """Tests if the database is writable"""
         try:
             cursor = self.connection.cursor()
             cursor.execute("SELECT 1")
@@ -180,7 +190,7 @@ class DatabaseManager:
             return False
 
     def add_channel(self, name: str, username: str, user_id: int) -> int:
-        """Ajoute un nouveau canal à la base de données"""
+        """Adds a new channel to the database"""
         try:
             cursor = self.connection.cursor()
             cursor.execute(
@@ -190,11 +200,11 @@ class DatabaseManager:
             self.connection.commit()
             return cursor.lastrowid
         except sqlite3.Error as e:
-            logger.error(f"Erreur lors de l'ajout du canal: {e}")
-            raise DatabaseError(f"Erreur lors de l'ajout du canal: {e}")
+            logger.error(f"Error adding channel: {e}")
+            raise DatabaseError(f"Error adding channel: {e}")
 
     def get_channel(self, channel_id: int) -> Optional[Dict[str, Any]]:
-        """Récupère les informations d'un canal"""
+        """Gets channel information"""
         try:
             cursor = self.connection.cursor()
             cursor.execute("SELECT * FROM channels WHERE id = ?", (channel_id,))
@@ -209,11 +219,11 @@ class DatabaseManager:
                 }
             return None
         except sqlite3.Error as e:
-            logger.error(f"Erreur lors de la récupération du canal: {e}")
-            raise DatabaseError(f"Erreur lors de la récupération du canal: {e}")
+            logger.error(f"Error retrieving channel: {e}")
+            raise DatabaseError(f"Error retrieving channel: {e}")
 
     def list_channels(self, user_id: int) -> List[Dict[str, Any]]:
-        """Liste tous les canaux d'un utilisateur"""
+        """Lists all channels of a user"""
         try:
             cursor = self.connection.cursor()
             # Vérifier d'abord si la colonne created_at existe
@@ -251,11 +261,11 @@ class DatabaseManager:
                     for row in cursor.fetchall()
                 ]
         except sqlite3.Error as e:
-            logger.error(f"Erreur lors de la liste des canaux: {e}")
-            raise DatabaseError(f"Erreur lors de la liste des canaux: {e}")
+            logger.error(f"Error listing channels: {e}")
+            raise DatabaseError(f"Error listing channels: {e}")
 
     def delete_channel(self, channel_id: int, user_id: int) -> bool:
-        """Supprime un canal et toutes ses publications associées"""
+        """Deletes a channel and all its associated publications"""
         try:
             cursor = self.connection.cursor()
             # Vérifier que le canal appartient bien à l'utilisateur
@@ -272,11 +282,11 @@ class DatabaseManager:
             self.connection.commit()
             return cursor.rowcount > 0
         except sqlite3.Error as e:
-            logger.error(f"Erreur lors de la suppression du canal: {e}")
+            logger.error(f"Error deleting channel: {e}")
             return False
 
     def get_channel_by_username(self, username: str, user_id: int) -> Optional[Dict[str, Any]]:
-        """Récupère un canal par son username pour un utilisateur spécifique"""
+        """Gets a channel by its username for a specific user"""
         try:
             cursor = self.connection.cursor()
             # Essayer avec le username tel quel ET avec/sans @
@@ -350,8 +360,35 @@ class DatabaseManager:
                     }
             return None
         except sqlite3.Error as e:
-            logger.error(f"Erreur lors de la récupération du canal par username: {e}")
-            raise DatabaseError(f"Erreur lors de la récupération du canal par username: {e}")
+            logger.error(f"Error retrieving channel by username: {e}")
+            raise DatabaseError(f"Error retrieving channel by username: {e}")
+
+    def get_total_users(self) -> int:
+        """Returns an approximate total of distinct users based on DB tables."""
+        try:
+            cursor = self.connection.cursor()
+            user_ids = set()
+
+            # Collect from primary user-scoped tables
+            for table, column in (
+                ("channels", "user_id"),
+                ("user_timezones", "user_id"),
+                ("channel_thumbnails", "user_id"),
+                ("user_usage", "user_id"),
+            ):
+                try:
+                    cursor.execute(f"SELECT DISTINCT {column} FROM {table}")
+                    for row in cursor.fetchall():
+                        if row and row[0] is not None:
+                            user_ids.add(int(row[0]))
+                except sqlite3.Error:
+                    # Table might not exist in older schemas; ignore
+                    pass
+
+            return len(user_ids)
+        except Exception as e:
+            logger.warning(f"get_total_users failed: {e}")
+            return 0
 
     def set_channel_tag(self, username: str, user_id: int, tag: str) -> bool:
         """Définit le tag d'un canal"""
@@ -374,11 +411,11 @@ class DatabaseManager:
             self.connection.commit()
             return cursor.rowcount > 0
         except sqlite3.Error as e:
-            logger.error(f"Erreur lors de la mise à jour du tag: {e}")
+            logger.error(f"Error updating tag: {e}")
             return False
 
     def get_channel_tag(self, username: str, user_id: int) -> Optional[str]:
-        """Récupère le tag d'un canal"""
+        """Gets a channel's tag"""
         try:
             cursor = self.connection.cursor()
             # Nettoyer le username (enlever @ si présent)
@@ -391,8 +428,98 @@ class DatabaseManager:
             row = cursor.fetchone()
             return row[0] if row and row[0] else None
         except sqlite3.Error as e:
-            logger.error(f"Erreur lors de la récupération du tag: {e}")
+            logger.error(f"Error retrieving tag: {e}")
             return None
+
+    # === Gestion des quotas et cooldown ===
+    def _reset_daily_usage_if_needed(self, user_id: int) -> None:
+        try:
+            cursor = self.connection.cursor()
+            cursor.execute("SELECT last_reset FROM user_usage WHERE user_id = ?", (user_id,))
+            row = cursor.fetchone()
+            now = datetime.now()
+            if row and row[0]:
+                try:
+                    last_reset = datetime.fromisoformat(row[0])
+                except Exception:
+                    last_reset = None
+                if not last_reset or now.date() > last_reset.date():
+                    cursor.execute(
+                        "UPDATE user_usage SET daily_bytes = 0, last_reset = ? WHERE user_id = ?",
+                        (now.isoformat(), user_id)
+                    )
+                    self.connection.commit()
+            else:
+                cursor.execute(
+                    "INSERT OR REPLACE INTO user_usage (user_id, daily_bytes, last_reset) VALUES (?, ?, ?)",
+                    (user_id, 0, now.isoformat())
+                )
+                self.connection.commit()
+        except sqlite3.Error as e:
+            logger.warning(f"reset_daily_usage_if_needed error: {e}")
+
+    def get_user_usage(self, user_id: int) -> Dict[str, Any]:
+        try:
+            self._reset_daily_usage_if_needed(user_id)
+            cursor = self.connection.cursor()
+            cursor.execute(
+                "SELECT daily_bytes, last_reset, last_post_time FROM user_usage WHERE user_id = ?",
+                (user_id,)
+            )
+            row = cursor.fetchone()
+            if row:
+                return {"daily_bytes": row[0] or 0, "last_reset": row[1], "last_post_time": row[2]}
+            now = datetime.now().isoformat()
+            cursor.execute(
+                "INSERT OR REPLACE INTO user_usage (user_id, daily_bytes, last_reset, last_post_time) VALUES (?, ?, ?, ?)",
+                (user_id, 0, now, None)
+            )
+            self.connection.commit()
+            return {"daily_bytes": 0, "last_reset": now, "last_post_time": None}
+        except sqlite3.Error as e:
+            logger.error(f"get_user_usage error: {e}")
+            return {"daily_bytes": 0, "last_reset": None, "last_post_time": None}
+
+    def check_limits(self, user_id: int, file_size_bytes: int, daily_limit_bytes: int, cooldown_seconds: int) -> Dict[str, Any]:
+        from datetime import datetime as _dt
+        self._reset_daily_usage_if_needed(user_id)
+        usage = self.get_user_usage(user_id)
+        # Daily
+        current = usage.get("daily_bytes", 0) or 0
+        if current + max(0, file_size_bytes or 0) > daily_limit_bytes:
+            remaining = max(0, daily_limit_bytes - current)
+            return {"ok": False, "reason": "daily", "current": current, "limit": daily_limit_bytes, "remaining": remaining}
+        # Cooldown
+        last_post_iso = usage.get("last_post_time")
+        if last_post_iso:
+            try:
+                last_post_time = _dt.fromisoformat(last_post_iso)
+                delta = (_dt.now() - last_post_time).total_seconds()
+                if delta < cooldown_seconds:
+                    return {"ok": False, "reason": "cooldown", "wait_seconds": int(cooldown_seconds - delta)}
+            except Exception:
+                pass
+        return {"ok": True}
+
+    def add_usage_after_post(self, user_id: int, file_size_bytes: int) -> None:
+        try:
+            self._reset_daily_usage_if_needed(user_id)
+            cursor = self.connection.cursor()
+            cursor.execute("SELECT daily_bytes FROM user_usage WHERE user_id = ?", (user_id,))
+            row = cursor.fetchone()
+            new_value = (row[0] if row and row[0] else 0) + max(0, file_size_bytes or 0)
+            cursor.execute(
+                "UPDATE user_usage SET daily_bytes = ?, last_post_time = ? WHERE user_id = ?",
+                (new_value, datetime.now().isoformat(), user_id)
+            )
+            if cursor.rowcount == 0:
+                cursor.execute(
+                    "INSERT OR REPLACE INTO user_usage (user_id, daily_bytes, last_reset, last_post_time) VALUES (?, ?, ?, ?)",
+                    (user_id, new_value, datetime.now().isoformat(), datetime.now().isoformat())
+                )
+            self.connection.commit()
+        except sqlite3.Error as e:
+            logger.warning(f"Erreur add_usage_after_post: {e}")
 
     def add_post(self, channel_id: int, post_type: str, content: str, 
                 caption: Optional[str] = None, buttons: Optional[str] = None,
@@ -400,14 +527,28 @@ class DatabaseManager:
         """Ajoute une nouvelle publication"""
         try:
             cursor = self.connection.cursor()
-            cursor.execute(
-                """
-                INSERT INTO posts 
-                (channel_id, post_type, content, caption, buttons, reactions, scheduled_time)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-                """,
-                (channel_id, post_type, content, caption, buttons, reactions, scheduled_time)
-            )
+            # Compatibilité schéma: si la colonne legacy 'type' existe (souvent NOT NULL), l'alimenter aussi
+            cursor.execute("PRAGMA table_info(posts)")
+            columns = [col[1] for col in cursor.fetchall()]
+
+            if 'type' in columns:
+                cursor.execute(
+                    """
+                    INSERT INTO posts 
+                    (channel_id, type, post_type, content, caption, buttons, reactions, scheduled_time)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (channel_id, post_type, post_type, content, caption, buttons, reactions, scheduled_time)
+                )
+            else:
+                cursor.execute(
+                    """
+                    INSERT INTO posts 
+                    (channel_id, post_type, content, caption, buttons, reactions, scheduled_time)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (channel_id, post_type, content, caption, buttons, reactions, scheduled_time)
+                )
             self.connection.commit()
             return cursor.lastrowid
         except sqlite3.Error as e:

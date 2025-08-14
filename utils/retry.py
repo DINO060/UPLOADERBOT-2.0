@@ -6,7 +6,7 @@ from functools import wraps
 logger = logging.getLogger('TelegramBot')
 
 class RetryError(Exception):
-    """Erreur après épuisement des tentatives"""
+    """Error after exhausting attempts"""
     pass
 
 def retry(
@@ -39,7 +39,7 @@ def retry(
                         
                     last_exception = e
                     logger.warning(
-                        f"Tentative {attempt + 1}/{max_attempts} échouée pour {func.__name__}: {e}"
+                        f"Attempt {attempt + 1}/{max_attempts} failed for {func.__name__}: {e}"
                     )
                     
                     if attempt < max_attempts - 1:
@@ -47,18 +47,18 @@ def retry(
                         current_delay *= backoff
                     else:
                         raise RetryError(
-                            f"Échec après {max_attempts} tentatives pour {func.__name__}"
+                            f"Failed after {max_attempts} attempts for {func.__name__}"
                         ) from last_exception
                         
             raise RetryError(
-                f"Échec après {max_attempts} tentatives pour {func.__name__}"
+                f"Failed after {max_attempts} attempts for {func.__name__}"
             ) from last_exception
             
         return wrapper
     return decorator
 
 class RetryManager:
-    """Gestionnaire de retry pour les opérations asynchrones"""
+    """Retry manager for asynchronous operations"""
     
     def __init__(
         self,
@@ -113,7 +113,7 @@ class RetryManager:
                     
                 last_exception = e
                 logger.warning(
-                    f"Tentative {attempt + 1}/{self.max_attempts} échouée pour {func.__name__}: {e}"
+                    f"Attempt {attempt + 1}/{self.max_attempts} failed for {func.__name__}: {e}"
                 )
                 
                 if attempt < self.max_attempts - 1:
@@ -121,9 +121,9 @@ class RetryManager:
                     current_delay *= self.backoff
                 else:
                     raise RetryError(
-                        f"Échec après {self.max_attempts} tentatives pour {func.__name__}"
+                        f"Failed after {self.max_attempts} attempts for {func.__name__}"
                     ) from last_exception
                     
         raise RetryError(
-            f"Échec après {self.max_attempts} tentatives pour {func.__name__}"
+            f"Failed after {self.max_attempts} attempts for {func.__name__}"
         ) from last_exception 

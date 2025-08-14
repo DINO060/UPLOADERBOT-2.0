@@ -99,29 +99,7 @@ async def handle_thumbnail_pyrogram(thumb_id: str, operation: str = "set", conte
                     if "FILE_REFERENCE_EXPIRED" in error_str:
                         logger.warning("🔄 FILE_REFERENCE_EXPIRED détecté, le thumbnail n'est plus accessible")
             
-            # STRATÉGIE 3 : Fallback vers Telethon en dernier recours
-            if not downloaded_path:
-                logger.info(f"📥 Tentative 3/3: Téléchargement via Telethon...")
-                try:
-                    # Obtenir le client Telethon
-                    from utils.clients import client_manager
-                    client_info = await client_manager.get_telethon_client()
-                    telethon_client = client_info if client_info else None
-                    
-                    if not telethon_client:
-                        raise Exception("Client Telethon non disponible")
-                    
-                    temp_path = os.path.join(settings.temp_folder, f"thumb_tele_{os.urandom(4).hex()}.jpg")
-                    downloaded_path = await telethon_client.download_media(thumb_id, temp_path)
-                    
-                    if downloaded_path and os.path.exists(downloaded_path) and os.path.getsize(downloaded_path) > 0:
-                        logger.info(f"✅ Thumbnail téléchargé via Telethon: {downloaded_path}")
-                    else:
-                        raise Exception("Fichier téléchargé invalide via Telethon")
-                        
-                except Exception as tele_error:
-                    logger.error(f"❌ Échec Telethon (dernier fallback): {tele_error}")
-                    downloaded_path = None
+            # STRATÉGIE 3 : plus de Telethon — on arrête la chaîne ici
             
             # ✅ VÉRIFICATION FINALE ET OPTIMISATION
             if not downloaded_path:

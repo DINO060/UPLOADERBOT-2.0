@@ -6,14 +6,14 @@ from telegram.ext import ContextTypes
 logger = logging.getLogger('TelegramBot')
 
 class BotError(Exception):
-    """Classe de base pour les erreurs du bot"""
+    """Base class for bot errors"""
     def __init__(self, message: str, original_error: Optional[Exception] = None):
         self.message = message
         self.original_error = original_error
         super().__init__(self.message)
 
 class DatabaseError(BotError):
-    """Erreur liée à la base de données"""
+    """Database-related error"""
     pass
 
 class ValidationError(BotError):
@@ -21,7 +21,7 @@ class ValidationError(BotError):
     pass
 
 class ResourceError(BotError):
-    """Erreur liée aux ressources"""
+    """Resource-related error"""
     pass
 
 async def handle_error(error: Exception, context: Optional[Any] = None) -> None:
@@ -45,11 +45,11 @@ async def handle_error(error: Exception, context: Optional[Any] = None) -> None:
             return error.message
         
         # Pour les autres erreurs, on retourne un message générique
-        return "Une erreur est survenue. Veuillez réessayer plus tard."
+        return "An error occurred. Please try again later."
         
     except Exception as e:
-        logger.error(f"Erreur lors de la gestion d'erreur: {e}")
-        return "Une erreur inattendue est survenue."
+        logger.error(f"Error during error handling: {e}")
+        return "An unexpected error occurred."
 
 def error_handler(
     error_types: Optional[list[Type[Exception]]] = None

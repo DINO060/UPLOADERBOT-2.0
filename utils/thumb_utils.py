@@ -97,50 +97,7 @@ async def prepare_thumbnail(client, thumb_id: str) -> Optional[str]:
         logger.error(f"Erreur lors de la préparation du thumbnail: {e}")
         return None
 
-async def download_thumbnail_for_telethon(context, thumb_id: str, user_id: int) -> Optional[str]:
-    """
-    ✅ Télécharge un thumbnail via Bot API et l'optimise pour Telethon.
-    
-    Args:
-        context: Contexte du bot pour télécharger via Bot API
-        thumb_id: ID de la miniature Telegram
-        user_id: ID utilisateur pour noms de fichiers uniques
-    
-    Returns:
-        str: Chemin du fichier thumbnail optimisé, ou None si échec
-    """
-    try:
-        # Créer un nom de fichier unique
-        temp_filename = f"thumb_telethon_{user_id}_{thumb_id[:10]}.jpg"
-        temp_path = os.path.join(settings.temp_folder, temp_filename)
-        
-        # Créer le dossier temp si nécessaire
-        os.makedirs(settings.temp_folder, exist_ok=True)
-        
-        # Télécharger via Bot API
-        file_obj = await context.bot.get_file(thumb_id)
-        downloaded_path = await file_obj.download_to_drive(temp_path)
-        
-        if not downloaded_path or not os.path.exists(downloaded_path):
-            logger.error("❌ Échec téléchargement thumbnail via Bot API")
-            return None
-        
-        # Optimiser pour Telethon
-        optimized_path = optimize_thumbnail(downloaded_path, downloaded_path + "_opt.jpg")
-        
-        # Nettoyer l'original si l'optimisation a créé un nouveau fichier
-        if optimized_path and optimized_path != downloaded_path:
-            try:
-                os.remove(downloaded_path)
-            except:
-                pass
-        
-        logger.info(f"✅ Thumbnail pour Telethon prêt: {optimized_path}")
-        return optimized_path or downloaded_path
-        
-    except Exception as e:
-        logger.error(f"❌ Erreur téléchargement thumbnail pour Telethon: {e}")
-        return None
+# Obsolète: fonctions liées à Telethon supprimées
 
 def cleanup_thumbnail_file(file_path: str) -> None:
     """
