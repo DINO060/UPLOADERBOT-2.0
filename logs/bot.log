@@ -19025,3 +19025,138 @@ sqlite3.OperationalError: no such column: status
 2025-08-14 19:30:01,477 - UploaderBot - INFO - ✅ 0 fichiers supprimés
 2025-08-14 19:30:11,321 - UploaderBot - INFO - ✅ Client Pyrogram démarré pour la gestion des gros fichiers
 2025-08-14 19:30:11,334 - UploaderBot - INFO - ✅ Client Pyrogram démarré (post_init)
+2025-08-15 12:36:44,799 - UploaderBot - INFO - ⚙️ Migration DB: columns 'type' and 'post_type' coexist, rebuilding 'posts' table
+2025-08-15 12:36:44,805 - UploaderBot - WARNING - ⚠️ Reconstruction de la table 'posts' échouée: no such column: created_at
+2025-08-15 12:36:44,809 - UploaderBot - INFO - ✅ Table channel_thumbnails existe déjà
+2025-08-15 12:36:44,810 - UploaderBot - INFO - Base de données initialisée avec succès
+2025-08-15 12:36:46,882 - UploaderBot - INFO - 🚀 Démarrage du bot...
+2025-08-15 12:36:46,883 - UploaderBot - INFO - 📱 Version Python: 3.13.5
+2025-08-15 12:36:46,885 - UploaderBot - INFO - 💻 Système: Windows 10
+2025-08-15 12:36:46,903 - UploaderBot - INFO - ✅ Scheduler manager créé avec succès
+2025-08-15 12:36:46,904 - UploaderBot - INFO - Définition des états de conversation:
+2025-08-15 12:36:46,904 - UploaderBot - INFO - MAIN_MENU = 0
+2025-08-15 12:36:46,904 - UploaderBot - INFO - POST_CONTENT = 1
+2025-08-15 12:36:46,905 - UploaderBot - INFO - POST_ACTIONS = 2
+2025-08-15 12:36:46,905 - UploaderBot - INFO - WAITING_PUBLICATION_CONTENT = 13
+2025-08-15 12:36:46,905 - UploaderBot - INFO - WAITING_REACTION_INPUT = 16
+2025-08-15 12:36:46,906 - UploaderBot - INFO - WAITING_URL_INPUT = 17
+2025-08-15 12:36:46,916 - UploaderBot - INFO - ConversationHandler configuré avec états: 0, 1, 16, 17, 12, 15, 22, 9, 10, 2, 13, 18, 19, 23, 5, 7
+2025-08-15 12:36:46,919 - UploaderBot - INFO - Ajout du handler de callback global
+2025-08-15 12:36:47,756 - UploaderBot - INFO - ✅ Scheduler démarré avec succès
+2025-08-15 12:36:47,757 - UploaderBot - INFO - 🔍 Scheduler running: True
+2025-08-15 12:36:47,758 - UploaderBot - INFO - 🔍 Scheduler state: 1
+2025-08-15 12:36:47,759 - UploaderBot - INFO - 🔄 Restauration des posts planifiés...
+2025-08-15 12:36:47,761 - UploaderBot - INFO - ✅ Aucun post planifié à restaurer
+2025-08-15 12:36:47,778 - UploaderBot - INFO - ✅ Tâche de nettoyage automatique planifiée (tous les jours à 3h)
+2025-08-15 12:36:47,779 - UploaderBot - INFO - 🧹 Début du nettoyage automatique des vieux fichiers...
+2025-08-15 12:36:47,829 - UploaderBot - INFO - ✅ 0 fichiers supprimés
+2025-08-15 12:36:54,459 - UploaderBot - INFO - ✅ Client Pyrogram démarré pour la gestion des gros fichiers
+2025-08-15 12:36:54,462 - UploaderBot - INFO - ✅ Client Pyrogram démarré (post_init)
+2025-08-15 12:44:21,076 - UploaderBot - INFO - ⚙️ Migration DB: columns 'type' and 'post_type' coexist, rebuilding 'posts' table
+2025-08-15 12:44:21,088 - UploaderBot - WARNING - ⚠️ Reconstruction de la table 'posts' échouée: no such column: created_at
+2025-08-15 12:44:21,094 - UploaderBot - INFO - ✅ Table channel_thumbnails existe déjà
+2025-08-15 12:44:21,095 - UploaderBot - INFO - Base de données initialisée avec succès
+2025-08-15 12:44:23,649 - UploaderBot - INFO - 🚀 Démarrage du bot...
+2025-08-15 12:44:23,650 - UploaderBot - INFO - 📱 Version Python: 3.13.5
+2025-08-15 12:44:23,651 - UploaderBot - INFO - 💻 Système: Windows 10
+2025-08-15 12:44:23,658 - UploaderBot - INFO - ✅ Scheduler manager créé avec succès
+2025-08-15 12:44:23,659 - UploaderBot - INFO - Définition des états de conversation:
+2025-08-15 12:44:23,660 - UploaderBot - INFO - MAIN_MENU = 0
+2025-08-15 12:44:23,661 - UploaderBot - INFO - POST_CONTENT = 1
+2025-08-15 12:44:23,662 - UploaderBot - INFO - POST_ACTIONS = 2
+2025-08-15 12:44:23,663 - UploaderBot - INFO - WAITING_PUBLICATION_CONTENT = 13
+2025-08-15 12:44:23,663 - UploaderBot - INFO - WAITING_REACTION_INPUT = 16
+2025-08-15 12:44:23,664 - UploaderBot - INFO - WAITING_URL_INPUT = 17
+2025-08-15 12:44:23,676 - UploaderBot - INFO - ConversationHandler configuré avec états: 0, 1, 16, 17, 12, 15, 22, 9, 10, 2, 13, 18, 19, 23, 5, 7
+2025-08-15 12:44:23,677 - UploaderBot - INFO - Ajout du handler de callback global
+2025-08-15 12:44:24,112 - UploaderBot - INFO - ✅ Scheduler démarré avec succès
+2025-08-15 12:44:24,113 - UploaderBot - INFO - 🔍 Scheduler running: True
+2025-08-15 12:44:24,114 - UploaderBot - INFO - 🔍 Scheduler state: 1
+2025-08-15 12:44:24,115 - UploaderBot - INFO - 🔄 Restauration des posts planifiés...
+2025-08-15 12:44:24,119 - UploaderBot - INFO - ✅ Aucun post planifié à restaurer
+2025-08-15 12:44:24,131 - UploaderBot - INFO - ✅ Tâche de nettoyage automatique planifiée (tous les jours à 3h)
+2025-08-15 12:44:24,134 - UploaderBot - INFO - 🧹 Début du nettoyage automatique des vieux fichiers...
+2025-08-15 12:44:24,145 - UploaderBot - INFO - ✅ 0 fichiers supprimés
+2025-08-15 12:44:30,990 - UploaderBot - INFO - ✅ Client Pyrogram démarré pour la gestion des gros fichiers
+2025-08-15 12:44:30,994 - UploaderBot - INFO - ✅ Client Pyrogram démarré (post_init)
+2025-08-15 13:19:54,989 - UploaderBot - INFO - ⚙️ Migration DB: columns 'type' and 'post_type' coexist, rebuilding 'posts' table
+2025-08-15 13:19:54,997 - UploaderBot - WARNING - ⚠️ Reconstruction de la table 'posts' échouée: no such column: created_at
+2025-08-15 13:19:55,005 - UploaderBot - INFO - ✅ Table channel_thumbnails existe déjà
+2025-08-15 13:19:55,005 - UploaderBot - INFO - Base de données initialisée avec succès
+2025-08-15 13:20:00,890 - UploaderBot - INFO - 🚀 Démarrage du bot...
+2025-08-15 13:20:00,899 - UploaderBot - INFO - 📱 Version Python: 3.13.5
+2025-08-15 13:20:00,901 - UploaderBot - INFO - 💻 Système: Windows 10
+2025-08-15 13:20:00,926 - UploaderBot - INFO - ✅ Scheduler manager créé avec succès
+2025-08-15 13:20:00,957 - UploaderBot - INFO - Définition des états de conversation:
+2025-08-15 13:20:00,958 - UploaderBot - INFO - MAIN_MENU = 0
+2025-08-15 13:20:00,962 - UploaderBot - INFO - POST_CONTENT = 1
+2025-08-15 13:20:00,970 - UploaderBot - INFO - POST_ACTIONS = 2
+2025-08-15 13:20:00,971 - UploaderBot - INFO - WAITING_PUBLICATION_CONTENT = 13
+2025-08-15 13:20:00,971 - UploaderBot - INFO - WAITING_REACTION_INPUT = 16
+2025-08-15 13:20:00,973 - UploaderBot - INFO - WAITING_URL_INPUT = 17
+2025-08-15 13:20:01,019 - UploaderBot - INFO - ConversationHandler configuré avec états: 0, 1, 16, 17, 12, 15, 22, 9, 10, 2, 13, 18, 19, 23, 5, 7
+2025-08-15 13:20:01,029 - UploaderBot - INFO - Ajout du handler de callback global
+2025-08-15 13:20:01,518 - UploaderBot - INFO - ✅ Scheduler démarré avec succès
+2025-08-15 13:20:01,519 - UploaderBot - INFO - 🔍 Scheduler running: True
+2025-08-15 13:20:01,520 - UploaderBot - INFO - 🔍 Scheduler state: 1
+2025-08-15 13:20:01,520 - UploaderBot - INFO - 🔄 Restauration des posts planifiés...
+2025-08-15 13:20:01,523 - UploaderBot - INFO - ✅ Aucun post planifié à restaurer
+2025-08-15 13:20:01,544 - UploaderBot - INFO - ✅ Tâche de nettoyage automatique planifiée (tous les jours à 3h)
+2025-08-15 13:20:01,547 - UploaderBot - INFO - 🧹 Début du nettoyage automatique des vieux fichiers...
+2025-08-15 13:20:01,570 - UploaderBot - INFO - ✅ 0 fichiers supprimés
+2025-08-15 13:20:08,047 - UploaderBot - INFO - ✅ Client Pyrogram démarré pour la gestion des gros fichiers
+2025-08-15 13:20:08,048 - UploaderBot - INFO - ✅ Client Pyrogram démarré (post_init)
+2025-08-15 13:31:51,548 - UploaderBot - INFO - ⚙️ Migration DB: columns 'type' and 'post_type' coexist, rebuilding 'posts' table
+2025-08-15 13:31:51,552 - UploaderBot - WARNING - ⚠️ Reconstruction de la table 'posts' échouée: no such column: created_at
+2025-08-15 13:31:51,555 - UploaderBot - INFO - ✅ Table channel_thumbnails existe déjà
+2025-08-15 13:31:51,555 - UploaderBot - INFO - Base de données initialisée avec succès
+2025-08-15 13:31:54,398 - UploaderBot - INFO - 🚀 Démarrage du bot...
+2025-08-15 13:31:54,400 - UploaderBot - INFO - 📱 Version Python: 3.13.5
+2025-08-15 13:31:54,401 - UploaderBot - INFO - 💻 Système: Windows 10
+2025-08-15 13:31:54,406 - UploaderBot - INFO - ✅ Scheduler manager créé avec succès
+2025-08-15 13:31:54,407 - UploaderBot - INFO - Définition des états de conversation:
+2025-08-15 13:31:54,408 - UploaderBot - INFO - MAIN_MENU = 0
+2025-08-15 13:31:54,409 - UploaderBot - INFO - POST_CONTENT = 1
+2025-08-15 13:31:54,409 - UploaderBot - INFO - POST_ACTIONS = 2
+2025-08-15 13:31:54,409 - UploaderBot - INFO - WAITING_PUBLICATION_CONTENT = 13
+2025-08-15 13:31:54,410 - UploaderBot - INFO - WAITING_REACTION_INPUT = 16
+2025-08-15 13:31:54,410 - UploaderBot - INFO - WAITING_URL_INPUT = 17
+2025-08-15 13:31:54,421 - UploaderBot - INFO - ConversationHandler configuré avec états: 0, 1, 16, 17, 12, 15, 22, 9, 10, 2, 13, 18, 19, 23, 5, 7
+2025-08-15 13:31:54,426 - UploaderBot - INFO - Ajout du handler de callback global
+2025-08-15 13:31:54,921 - UploaderBot - INFO - ✅ Scheduler démarré avec succès
+2025-08-15 13:31:54,921 - UploaderBot - INFO - 🔍 Scheduler running: True
+2025-08-15 13:31:54,922 - UploaderBot - INFO - 🔍 Scheduler state: 1
+2025-08-15 13:31:54,922 - UploaderBot - INFO - 🔄 Restauration des posts planifiés...
+2025-08-15 13:31:54,924 - UploaderBot - INFO - ✅ Aucun post planifié à restaurer
+2025-08-15 13:31:54,943 - UploaderBot - INFO - ✅ Tâche de nettoyage automatique planifiée (tous les jours à 3h)
+2025-08-15 13:31:54,946 - UploaderBot - INFO - 🧹 Début du nettoyage automatique des vieux fichiers...
+2025-08-15 13:31:54,995 - UploaderBot - INFO - ✅ 0 fichiers supprimés
+2025-08-15 13:32:01,381 - UploaderBot - INFO - ✅ Client Pyrogram démarré pour la gestion des gros fichiers
+2025-08-15 13:32:01,382 - UploaderBot - INFO - ✅ Client Pyrogram démarré (post_init)
+2025-08-15 16:09:56,447 - UploaderBot - INFO - ⚙️ Migration DB: columns 'type' and 'post_type' coexist, rebuilding 'posts' table
+2025-08-15 16:09:56,450 - UploaderBot - WARNING - ⚠️ Reconstruction de la table 'posts' échouée: no such column: created_at
+2025-08-15 16:09:56,455 - UploaderBot - INFO - ✅ Table channel_thumbnails existe déjà
+2025-08-15 16:09:56,457 - UploaderBot - INFO - Base de données initialisée avec succès
+2025-08-15 16:09:58,535 - UploaderBot - INFO - 🚀 Démarrage du bot...
+2025-08-15 16:09:58,535 - UploaderBot - INFO - 📱 Version Python: 3.13.5
+2025-08-15 16:09:58,537 - UploaderBot - INFO - 💻 Système: Windows 10
+2025-08-15 16:09:58,561 - UploaderBot - INFO - ✅ Scheduler manager créé avec succès
+2025-08-15 16:09:58,564 - UploaderBot - INFO - Définition des états de conversation:
+2025-08-15 16:09:58,565 - UploaderBot - INFO - MAIN_MENU = 0
+2025-08-15 16:09:58,566 - UploaderBot - INFO - POST_CONTENT = 1
+2025-08-15 16:09:58,566 - UploaderBot - INFO - POST_ACTIONS = 2
+2025-08-15 16:09:58,567 - UploaderBot - INFO - WAITING_PUBLICATION_CONTENT = 13
+2025-08-15 16:09:58,568 - UploaderBot - INFO - WAITING_REACTION_INPUT = 16
+2025-08-15 16:09:58,568 - UploaderBot - INFO - WAITING_URL_INPUT = 17
+2025-08-15 16:09:58,598 - UploaderBot - INFO - ConversationHandler configuré avec états: 0, 1, 16, 17, 12, 15, 22, 9, 10, 2, 13, 18, 19, 23, 5, 7
+2025-08-15 16:09:58,599 - UploaderBot - INFO - Ajout du handler de callback global
+2025-08-15 16:09:59,162 - UploaderBot - INFO - ✅ Scheduler démarré avec succès
+2025-08-15 16:09:59,162 - UploaderBot - INFO - 🔍 Scheduler running: True
+2025-08-15 16:09:59,163 - UploaderBot - INFO - 🔍 Scheduler state: 1
+2025-08-15 16:09:59,163 - UploaderBot - INFO - 🔄 Restauration des posts planifiés...
+2025-08-15 16:09:59,164 - UploaderBot - INFO - ✅ Aucun post planifié à restaurer
+2025-08-15 16:09:59,178 - UploaderBot - INFO - ✅ Tâche de nettoyage automatique planifiée (tous les jours à 3h)
+2025-08-15 16:09:59,179 - UploaderBot - INFO - 🧹 Début du nettoyage automatique des vieux fichiers...
+2025-08-15 16:09:59,198 - UploaderBot - INFO - ✅ 0 fichiers supprimés
+2025-08-15 16:10:05,072 - UploaderBot - INFO - ✅ Client Pyrogram démarré pour la gestion des gros fichiers
+2025-08-15 16:10:05,072 - UploaderBot - INFO - ✅ Client Pyrogram démarré (post_init)

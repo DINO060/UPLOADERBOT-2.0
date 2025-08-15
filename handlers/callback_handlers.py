@@ -211,18 +211,42 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             return await planifier_post(update, context)
         
         elif callback_data == "channel_stats":
-            # Redirection vers le site TELE-SITE
-            site_url = "http://localhost:8888"  # À remplacer par l'URL de production
-            await safe_edit_callback_message(
-                query,
-                "📊 **Statistiques**\n\n"
-                "Cliquez sur le bouton ci-dessous pour accéder à vos statistiques détaillées sur TELE-SITE.\n\n"
-                "Connectez-vous avec votre compte Telegram pour voir les stats de vos canaux.",
-                reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("🌐 Ouvrir TELE-SITE", url=site_url)],
-                    [InlineKeyboardButton("↩️ Retour", callback_data="main_menu")]
-                ])
-            )
+            # Génération du lien SSO pour les statistiques
+            try:
+                from ..utils_sso import make_sso_link
+            except ImportError:
+                import sys
+                import os
+                sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+                from utils_sso import make_sso_link
+            
+            user_id = update.effective_user.id
+            try:
+                # Accuser la réception du clic pour éviter le spinner côté Telegram
+                await query.answer()
+                sso_link = make_sso_link(user_id, redirect="/channels")
+                
+                await safe_edit_callback_message(
+                    query,
+                    "📊 **Accès aux Statistiques**\n\n"
+                    "🔐 Un lien sécurisé a été généré pour vous connecter automatiquement.\n\n"
+                    "⏱ Ce lien expire dans 60 secondes.\n\n"
+                    "Cliquez sur le bouton ci-dessous pour accéder à vos statistiques:",
+                    reply_markup=InlineKeyboardMarkup([
+                        [InlineKeyboardButton("🌐 Ouvrir les Statistiques", url=sso_link)],
+                        [InlineKeyboardButton("↩️ Retour", callback_data="main_menu")]
+                    ])
+                )
+            except Exception as e:
+                logger.error(f"Erreur lors de la génération du lien SSO: {e}")
+                await safe_edit_callback_message(
+                    query,
+                    "❌ Erreur lors de la génération du lien d'accès.\n"
+                    "Veuillez réessayer plus tard.",
+                    reply_markup=InlineKeyboardMarkup([
+                        [InlineKeyboardButton("↩️ Retour", callback_data="main_menu")]
+                    ])
+                )
             return MAIN_MENU
             
         elif callback_data == "schedule_send":
