@@ -13,7 +13,7 @@ import time
 
 from utils.message_utils import MessageError, PostType
 from database.manager import DatabaseManager
-from mon_bot_telegram.database.channel_repo import list_user_channels
+from database.channel_repo import list_user_channels
 from utils.validators import InputValidator
 from conversation_states import (
     MAIN_MENU,
@@ -108,23 +108,6 @@ async def safe_edit_callback_message(query, text, reply_markup=None, parse_mode=
                         pass
                 logger.error(f"Error sending replacement: {e2}")
                 raise
-        # Si erreur de parsing HTML, retenter sans parse_mode
-        if "can't parse entities" in str(e).lower():
-                            logger.error(f"Error editing message (HTML parse). Retrying without parse_mode. Error: {e}")
-            try:
-                await query.edit_message_text(text=text, reply_markup=reply_markup)
-                return
-            except Exception as e3:
-                # Dernier fallback: nouveau message sans parse_mode
-                try:
-                    await query.message.reply_text(text, reply_markup=reply_markup)
-                    return
-                except Exception:
-                    logger.error(f"Erreur lors de l'édition du message: {e3}")
-                    raise
-        else:
-            logger.error(f"Erreur lors de l'édition du message: {e}")
-            raise
 
 # Fonction utilitaire pour normaliser les noms de canaux
 def normalize_channel_username(channel_username):
@@ -228,11 +211,17 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             return await planifier_post(update, context)
         
         elif callback_data == "channel_stats":
-            # Placeholder simple
+            # Redirection vers le site TELE-SITE
+            site_url = "http://localhost:8888"  # À remplacer par l'URL de production
             await safe_edit_callback_message(
                 query,
-                "📊 Statistics\n\nSoon…",
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("↩️ Back", callback_data="main_menu")]])
+                "📊 **Statistiques**\n\n"
+                "Cliquez sur le bouton ci-dessous pour accéder à vos statistiques détaillées sur TELE-SITE.\n\n"
+                "Connectez-vous avec votre compte Telegram pour voir les stats de vos canaux.",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("🌐 Ouvrir TELE-SITE", url=site_url)],
+                    [InlineKeyboardButton("↩️ Retour", callback_data="main_menu")]
+                ])
             )
             return MAIN_MENU
             
@@ -1559,16 +1548,16 @@ async def select_channel(update: Update, context: ContextTypes.DEFAULT_TYPE, cha
     user_id = update.effective_user.id
     db_manager = DatabaseManager()
     
-        # Resolve from repo first; fallback to legacy DB if needed
-        repo_matches = [c for c in list_user_channels(user_id) if (c.get('username') == channel_username or f"@{c.get('username')}" == channel_username)]
-        channel = None
-        if repo_matches:
-            first = repo_matches[0]
-            channel = { 'name': first.get('title') or (first.get('username') or ''), 'username': first.get('username') }
-        else:
-            db_manager = DatabaseManager()
-            channel = db_manager.get_channel_by_username(channel_username, user_id)
-    
+    # Resolve from repo first; fallback to legacy DB if needed
+    repo_matches = [c for c in list_user_channels(user_id) if (c.get('username') == channel_username or f"@{c.get('username')}" == channel_username)]
+    channel = None
+    if repo_matches:
+        first = repo_matches[0]
+        channel = { 'name': first.get('title') or (first.get('username') or ''), 'username': first.get('username') }
+    else:
+        db_manager = DatabaseManager()
+        channel = db_manager.get_channel_by_username(channel_username, user_id)
+
     if not channel:
         await query.edit_message_text(
             "❌ Canal non trouvé.",
@@ -1581,18 +1570,18 @@ async def select_channel(update: Update, context: ContextTypes.DEFAULT_TYPE, cha
     # Stocker le canal sélectionné
     context.user_data['selected_channel'] = channel
     
-        await query.edit_message_text(
-            f"📺 Selected channel: **{channel['name']}**\n\n"
-            f"Now send your content:\n"
-            f"• 📝 Text\n"
-            f"• 🖼️ Photo\n"
-            f"• 🎥 Video\n"
-            f"• 📄 Document",
-            parse_mode="Markdown",
-            reply_markup=InlineKeyboardMarkup([[
-                InlineKeyboardButton("❌ Cancel", callback_data="create_publication")
-            ]])
-        )
+    await query.edit_message_text(
+        f"📺 Selected channel: **{channel['name']}**\n\n"
+        f"Now send your content:\n"
+        f"• 📝 Text\n"
+        f"• 🖼️ Photo\n"
+        f"• 🎥 Video\n"
+        f"• 📄 Document",
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup([[
+            InlineKeyboardButton("❌ Cancel", callback_data="create_publication")
+        ]])
+    )
     
     return WAITING_PUBLICATION_CONTENT
 

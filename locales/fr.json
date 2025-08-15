@@ -1,7 +1,7 @@
 {
   "buttons.choose_language": "Choisis ta langue",
   "lang.saved": "Langue mise à jour : {lang_flag} {lang_name}.",
-  "start.welcome": "🤖 Bienvenue sur le Gestionnaire de Bot Telegram !\n\nJe peux vous aider à gérer vos canaux Telegram et programmer des publications avec réactions et boutons URL.\n\nUtilisez /help pour voir toutes les commandes disponibles.",
+  "start.welcome": "👋 Bienvenue sur le Bot Rename & Scheduler !\n\nJe vous aide à renommer les légendes/noms de fichiers, définir une miniature personnalisée et programmer vos publications sur vos canaux.\n\n📋 Fonctionnalités :\n• Renommer légende/nom de fichier\n• Définir une miniature personnalisée\n• Programmer l'envoi de publications\n\n🎯 Commandes :\n/start - Afficher ce message\n/help - Afficher l'aide et l'utilisation\n/addchannel - Ajouter un nouveau canal (Nom @username ou juste @username)\n/setthumbnail - Définir une miniature pour un canal (utiliser avec @username ou sélection actuelle)\n/settings - Ouvrir les paramètres\n\n🛠 Commandes admin :\n/addfsub - Ajouter des canaux d'abonnement forcé (admin)\n/delfsub - Supprimer des canaux d'abonnement forcé (admin)\n/channels - Lister les canaux d'abonnement forcé (admin)\n/status - Statut du bot",
   "help.title": "📚 Commandes Disponibles",
   "help.language": "/language - Changer la langue du bot",
   "help.timezone": "/timezone - Définir votre fuseau horaire",
@@ -123,7 +123,7 @@
   "database.config_error": "Erreur lors de la configuration de la base de données : {error}",
   "database.config_error_raise": "Erreur de configuration de la base de données : {error}",
   "database.check_status": "Vérifie l'état de la base de données",
-  "database.tables_check": "tables": len(tables) >= 2,  // Au moins 2 tables (channels et posts)",
+  "database.tables_check": "tables: len(tables) >= 2, au moins 2 tables (channels et posts)",
   "database.check_error": "Erreur lors de la vérification de la base de données : {error}",
   "database.writable_test": "Teste si la base de données est accessible en écriture",
   "database.add_channel": "Ajoute un nouveau canal à la base de données",

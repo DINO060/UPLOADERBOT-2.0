@@ -2144,16 +2144,6 @@ def main():
         application.add_handler(CommandHandler("channels", list_fsubs, filters=filters.User(ADMIN_IDS)))
         application.add_handler(CommandHandler("status", status_cmd))
         
-        # --- Enregistrement des handlers de langue ---
-        application.add_handler(CommandHandler("language", cmd_language))
-        application.add_handler(CallbackQueryHandler(cb_set_language, pattern=f"^{LANG_CB_PREFIX}"))
-
-        # Wrapper /start avec vérification f-sub
-        async def start_guarded(update: Update, context: ContextTypes.DEFAULT_TYPE):
-            if not await require_fsub_or_prompt(update, context):
-                return ConversationHandler.END
-            return await command_handlers.start(update, context)
-
         # Language handlers
         LANG_CB_PREFIX = "lang:"  # ex: "lang:fr"
 
@@ -2191,6 +2181,16 @@ def main():
             except ValueError:
                 # langue non supportée
                 await query.edit_message_text("❌ Unsupported language.")
+
+        # --- Enregistrement des handlers de langue ---
+        application.add_handler(CommandHandler("language", cmd_language))
+        application.add_handler(CallbackQueryHandler(cb_set_language, pattern=f"^{LANG_CB_PREFIX}"))
+
+        # Wrapper /start avec vérification f-sub
+        async def start_guarded(update: Update, context: ContextTypes.DEFAULT_TYPE):
+            if not await require_fsub_or_prompt(update, context):
+                return ConversationHandler.END
+            return await command_handlers.start(update, context)
 
         # Wrapper /create avec vérification f-sub
         async def create_guarded(update: Update, context: ContextTypes.DEFAULT_TYPE):

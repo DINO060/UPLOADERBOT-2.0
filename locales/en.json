@@ -1,7 +1,7 @@
 {
   "buttons.choose_language": "Choose your language",
   "lang.saved": "Language updated to {lang_flag} {lang_name}.",
-  "start.welcome": "🤖 Welcome to the Telegram Bot Manager!\n\nI can help you manage your Telegram channels and schedule posts with reactions and URL buttons.\n\nUse /help to see all available commands.",
+  "start.welcome": "👋 Welcome to Rename & Scheduler Bot!\n\nI help you rename captions/filenames, set a custom thumbnail, and schedule your posts to your channels.\n\n📋 Features:\n• Rename caption/filename\n• Set a custom thumbnail\n• Schedule post sending\n\n🎯 Commands:\n/start - Show this message\n/help - Show help and usage\n/addchannel - Add a new channel (Name @username or just @username)\n/setthumbnail - Set a thumbnail for a channel (use with @username or current selection)\n/settings - Open settings\n\n🛠 Admin commands:\n/addfsub - Add forced-subscription channels (admin)\n/delfsub - Delete forced-subscription channels (admin)\n/channels - List forced-subscription channels (admin)\n/status - Bot status",
   "help.title": "📚 Available Commands",
   "help.language": "/language - Change bot language",
   "help.timezone": "/timezone - Set your timezone",
@@ -123,7 +123,7 @@
   "database.config_error": "Error configuring database: {error}",
   "database.config_error_raise": "Database configuration error: {error}",
   "database.check_status": "Checks database status",
-  "database.tables_check": "tables": len(tables) >= 2,  // At least 2 tables (channels and posts)",
+  "database.tables_check": "tables: len(tables) >= 2, at least 2 tables (channels and posts)",
   "database.check_error": "Error checking database: {error}",
   "database.writable_test": "Tests if the database is writable",
   "database.add_channel": "Adds a new channel to the database",
