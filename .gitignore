@@ -98,6 +98,7 @@ Thumbs.db
 
 # Configuration files with sensitive data
 config.ini
+config.py
 
 # Statistics files
 rename_stats.json
