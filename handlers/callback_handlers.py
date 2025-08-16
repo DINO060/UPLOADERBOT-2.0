@@ -389,8 +389,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         elif callback_data == "add_channel":
             return await add_channel_prompt(update, context)
             
-        elif callback_data == "use_default_channel":
-            return await use_default_channel(update, context)
+
             
         elif callback_data.startswith("select_channel_"):
             channel_username = callback_data.replace("select_channel_", "")
@@ -1533,42 +1532,7 @@ async def add_channel_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE)
     return WAITING_CHANNEL_INFO
 
 
-async def use_default_channel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Utilise le canal par défaut du bot"""
-    query = update.callback_query
-    await query.answer()
-    
-    # Créer un canal temporaire par défaut
-    user_id = update.effective_user.id
-    db_manager = DatabaseManager()
-    
-    try:
-        # Vérifier si un canal par défaut existe déjà
-        default_channel = db_manager.get_channel_by_username("@default_channel", user_id)
-        
-        if not default_channel:
-            # Créer le canal par défaut
-            channel_id = db_manager.add_channel("Canal par défaut", "@default_channel", user_id)
-            
-        await query.edit_message_text(
-            "✅ Canal par défaut activé!\n\n"
-            "Vous pouvez maintenant créer des publications.",
-            reply_markup=InlineKeyboardMarkup([[
-                InlineKeyboardButton("📝 Créer une publication", callback_data="create_publication"),
-                InlineKeyboardButton("↩️ Menu principal", callback_data="main_menu")
-            ]])
-        )
-        
-    except Exception as e:
-        logger.error(f"Erreur lors de la création du canal par défaut: {e}")
-        await query.edit_message_text(
-            "❌ Erreur lors de la création du canal par défaut.",
-            reply_markup=InlineKeyboardMarkup([[
-                InlineKeyboardButton("↩️ Menu principal", callback_data="main_menu")
-            ]])
-        )
-    
-    return MAIN_MENU
+
 
 
 async def select_channel(update: Update, context: ContextTypes.DEFAULT_TYPE, channel_username: str) -> int:
@@ -1990,16 +1954,13 @@ async def handle_create_publication(update: Update, context: ContextTypes.DEFAUL
         if not channels:
             keyboard = [
                 [InlineKeyboardButton("➕ Add channel", callback_data="add_channel")],
-                [InlineKeyboardButton("🔄 Use default channel", callback_data="use_default_channel")],
                 [InlineKeyboardButton("↩️ Main menu", callback_data="main_menu")]
             ]
             
             message_text = (
                 "⚠️ No channels configured\n\n"
                 "To publish content, you must first configure a Telegram channel.\n"
-                "You can either:\n"
-                "• Add an existing channel where you are an admin\n"
-                "• Use the default channel (temporary)"
+                "You can add an existing channel where you are an admin."
             )
             
             await query.edit_message_text(
