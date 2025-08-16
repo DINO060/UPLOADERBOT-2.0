@@ -96,3 +96,78 @@ def list_user_channels(user_id: int) -> Iterable[Dict[str, Any]]:
         return [dict(zip(cols, r)) for r in rows]
 
 
+def get_channel_by_username(username: str, user_id: int) -> Optional[Dict[str, Any]]:
+    """Gets a channel by its username for a specific user"""
+    with db() as cx:
+        # Nettoyer le username
+        clean_username = username.lstrip('@')
+        with_at = f"@{clean_username}" if not username.startswith('@') else username
+        
+        # Essayer d'abord avec le format exact
+        r = cx.execute(
+            """
+            SELECT c.id, c.tg_chat_id, c.title, c.username, c.bot_is_admin
+            FROM channels c
+            JOIN channel_members m ON m.channel_id = c.id
+            WHERE c.username = ? AND m.user_id = ?
+            """,
+            (username, user_id)
+        ).fetchone()
+        
+        # Si pas trouvé, essayer sans @
+        if not r:
+            r = cx.execute(
+                """
+                SELECT c.id, c.tg_chat_id, c.title, c.username, c.bot_is_admin
+                FROM channels c
+                JOIN channel_members m ON m.channel_id = c.id
+                WHERE c.username = ? AND m.user_id = ?
+                """,
+                (clean_username, user_id)
+            ).fetchone()
+        
+        # Si pas trouvé, essayer avec @
+        if not r:
+            r = cx.execute(
+                """
+                SELECT c.id, c.tg_chat_id, c.title, c.username, c.bot_is_admin
+                FROM channels c
+                JOIN channel_members m ON m.channel_id = c.id
+                WHERE c.username = ? AND m.user_id = ?
+                """,
+                (with_at, user_id)
+            ).fetchone()
+        
+        if r:
+            cols = ["id", "tg_chat_id", "title", "username", "bot_is_admin"]
+            result = dict(zip(cols, r))
+            # Ajouter user_id pour la compatibilité avec l'ancien format
+            result["user_id"] = user_id
+            return result
+        
+        return None
+
+
+def add_channel(name: str, username: str, user_id: int) -> int:
+    """Add a new channel for a user"""
+    with db() as cx:
+        # Créer un tg_chat_id fictif (négatif pour les canaux ajoutés manuellement)
+        import random
+        fake_tg_chat_id = -random.randint(1000000, 9999999)
+        
+        # Insérer le canal
+        cursor = cx.execute(
+            """
+            INSERT INTO channels (tg_chat_id, title, username, bot_is_admin)
+            VALUES (?, ?, ?, ?)
+            """,
+            (fake_tg_chat_id, name, username, 0)
+        )
+        channel_id = cursor.lastrowid
+        
+        # Ajouter l'utilisateur comme membre
+        add_member_if_missing(channel_id, user_id)
+        
+        return channel_id
+
+

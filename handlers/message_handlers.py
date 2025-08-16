@@ -355,9 +355,9 @@ async def handle_channel_info(update: Update, context: ContextTypes.DEFAULT_TYPE
                 return SETTINGS
             
             # Vérifier si le canal existe déjà
-            db_manager = DatabaseManager()
+            from database.channel_repo import get_channel_by_username
             
-            if db_manager.get_channel_by_username(channel_username, user_id):
+            if get_channel_by_username(channel_username, user_id):
                 await update.message.reply_text(
                     "❌ This channel is already registered.",
                     reply_markup=InlineKeyboardMarkup([
@@ -370,7 +370,8 @@ async def handle_channel_info(update: Update, context: ContextTypes.DEFAULT_TYPE
             # Si on a déjà un nom d'affichage, enregistrer directement
             if display_name and display_name != channel_username:
                 try:
-                    db_manager.add_channel(display_name, channel_username, user_id)
+                    from database.channel_repo import add_channel
+                    add_channel(display_name, channel_username, user_id)
                     
                     await update.message.reply_text(
                         f"✅ Channel added successfully!\n\n"
@@ -406,7 +407,8 @@ async def handle_channel_info(update: Update, context: ContextTypes.DEFAULT_TYPE
                 pass
 
             try:
-                db_manager.add_channel(final_display_name, channel_username, user_id)
+                from database.channel_repo import add_channel
+                add_channel(final_display_name, channel_username, user_id)
                 await update.message.reply_text(
                     f"✅ Channel added successfully!\n\n"
                     f"📺 **{final_display_name}** (@{channel_username})",

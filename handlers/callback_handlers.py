@@ -372,6 +372,13 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         elif callback_data == "timezone_settings":
             return await handle_timezone_settings(update, context)
             
+        elif callback_data == "language_settings":
+            return await handle_language_settings(update, context)
+            
+        elif callback_data.startswith("set_language_"):
+            lang_code = callback_data.replace("set_language_", "")
+            return await handle_set_language(update, context, lang_code)
+            
         elif callback_data.startswith("set_timezone_"):
             timezone_code = callback_data.replace("set_timezone_", "")
             return await handle_set_timezone(update, context, timezone_code)
@@ -1730,9 +1737,16 @@ async def custom_settings_menu(update: Update, context: ContextTypes.DEFAULT_TYP
     query = update.callback_query
     await query.answer()
     
+    # Importer i18n pour la localisation
+    from i18n import get_user_lang, t, SUPPORTED
+    
+    user_id = update.effective_user.id
+    user_lang = get_user_lang(user_id, update.effective_user.language_code)
+    
     keyboard = [
         [InlineKeyboardButton("🌐 Manage channels", callback_data="manage_channels")],
         [InlineKeyboardButton("🕐 Timezone", callback_data="timezone_settings")],
+        [InlineKeyboardButton(t(user_lang, "settings.language"), callback_data="language_settings")],
         [InlineKeyboardButton("↩️ Main menu", callback_data="main_menu")]
     ]
     
@@ -3453,4 +3467,93 @@ async def process_thumbnail_and_upload(update: Update, context: ContextTypes.DEF
                     os.remove(temp_file)
             except:
                 pass
+
+
+async def handle_language_settings(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Gère les paramètres de langue"""
+    query = update.callback_query
+    await query.answer()
+    
+    from i18n import get_user_lang, t, SUPPORTED
+    
+    user_id = update.effective_user.id
+    user_lang = get_user_lang(user_id, update.effective_user.language_code)
+    
+    # Récupérer la langue actuelle
+    current_lang = get_user_lang(user_id, update.effective_user.language_code)
+    current_lang_info = SUPPORTED.get(current_lang, SUPPORTED["en"])
+    
+    # Construire le clavier avec toutes les langues disponibles
+    keyboard = []
+    for lang_code, lang_info in SUPPORTED.items():
+        flag = lang_info["flag"]
+        name = lang_info["name"]
+        # Ajouter un indicateur pour la langue actuelle
+        if lang_code == current_lang:
+            keyboard.append([InlineKeyboardButton(f"{flag} {name} ✅", callback_data=f"set_language_{lang_code}")])
+        else:
+            keyboard.append([InlineKeyboardButton(f"{flag} {name}", callback_data=f"set_language_{lang_code}")])
+    
+    # Bouton retour
+    keyboard.append([InlineKeyboardButton("↩️ Back", callback_data="custom_settings")])
+    
+    await query.edit_message_text(
+        f"{t(user_lang, 'language.title')}\n\n"
+        f"{t(user_lang, 'language.current').format(lang_flag=current_lang_info['flag'], lang_name=current_lang_info['name'])}\n\n"
+        f"{t(user_lang, 'language.choose')}",
+        reply_markup=InlineKeyboardMarkup(keyboard),
+        parse_mode="Markdown"
+    )
+    
+    return SETTINGS
+
+
+async def handle_set_language(update: Update, context: ContextTypes.DEFAULT_TYPE, lang_code: str) -> int:
+    """Gère le changement de langue"""
+    query = update.callback_query
+    await query.answer()
+    
+    from i18n import set_user_lang, get_user_lang, t, SUPPORTED
+    
+    user_id = update.effective_user.id
+    
+    try:
+        # Vérifier que la langue est supportée
+        if lang_code not in SUPPORTED:
+            await query.edit_message_text(
+                "❌ Langue non supportée.",
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton("↩️ Back", callback_data="language_settings")
+                ]])
+            )
+            return SETTINGS
+        
+        # Changer la langue de l'utilisateur
+        set_user_lang(user_id, lang_code)
+        
+        # Récupérer les informations de la nouvelle langue
+        lang_info = SUPPORTED[lang_code]
+        
+        # Utiliser la nouvelle langue pour le message de confirmation
+        await query.edit_message_text(
+            t(lang_code, 'language.success').format(
+                lang_flag=lang_info['flag'], 
+                lang_name=lang_info['name']
+            ),
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("↩️ Back", callback_data="custom_settings")
+            ]])
+        )
+        
+        return SETTINGS
+        
+    except Exception as e:
+        logger.error(f"Erreur lors du changement de langue: {e}")
+        await query.edit_message_text(
+            "❌ Erreur lors du changement de langue.",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("↩️ Back", callback_data="language_settings")
+            ]])
+        )
+        return SETTINGS
 

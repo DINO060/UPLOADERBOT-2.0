@@ -108,3 +108,6 @@ tokens.txt
 # User data
 user_data/
 sessions/
+
+# Local Netlify folder
+.netlify

@@ -396,6 +396,40 @@ class CommandHandlers:
         )
         return WAITING_THUMBNAIL
 
+    async def language_cmd(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+        """Handles the /language command"""
+        user_id = update.effective_user.id
+        
+        from i18n import get_user_lang, t, SUPPORTED
+        
+        # Récupérer la langue actuelle
+        current_lang = get_user_lang(user_id, update.effective_user.language_code)
+        current_lang_info = SUPPORTED.get(current_lang, SUPPORTED["en"])
+        
+        # Construire le clavier avec toutes les langues disponibles
+        keyboard = []
+        for lang_code, lang_info in SUPPORTED.items():
+            flag = lang_info["flag"]
+            name = lang_info["name"]
+            # Ajouter un indicateur pour la langue actuelle
+            if lang_code == current_lang:
+                keyboard.append([InlineKeyboardButton(f"{flag} {name} ✅", callback_data=f"set_language_{lang_code}")])
+            else:
+                keyboard.append([InlineKeyboardButton(f"{flag} {name}", callback_data=f"set_language_{lang_code}")])
+        
+        # Bouton retour
+        keyboard.append([InlineKeyboardButton("↩️ Back", callback_data="main_menu")])
+        
+        await update.message.reply_text(
+            f"{t(current_lang, 'language.title')}\n\n"
+            f"{t(current_lang, 'language.current').format(lang_flag=current_lang_info['flag'], lang_name=current_lang_info['name'])}\n\n"
+            f"{t(current_lang, 'language.choose')}",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode="Markdown"
+        )
+        
+        return SETTINGS
+
 
 # Fonction d'erreur générique pour les commandes
 async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

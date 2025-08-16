@@ -2183,8 +2183,7 @@ def main():
                 await query.edit_message_text("❌ Unsupported language.")
 
         # --- Enregistrement des handlers de langue ---
-        application.add_handler(CommandHandler("language", cmd_language))
-        application.add_handler(CallbackQueryHandler(cb_set_language, pattern=f"^{LANG_CB_PREFIX}"))
+        application.add_handler(CommandHandler("language", command_handlers.language_cmd))
 
         # Wrapper /start avec vérification f-sub
         async def start_guarded(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -2213,6 +2212,7 @@ def main():
                 CommandHandler("help", command_handlers.help),
                 CommandHandler("addchannel", command_handlers.addchannel_cmd),
                 CommandHandler("setthumbnail", command_handlers.setthumbnail_cmd),
+                CommandHandler("language", command_handlers.language_cmd),
             ],
             states={
                 MAIN_MENU: [

@@ -300,7 +300,7 @@ class DatabaseManager:
             if 'created_at' in columns:
                 # Essayer d'abord avec le format exact
                 cursor.execute(
-                    "SELECT id, name, username, user_id, created_at FROM channels WHERE username = ? AND user_id = ?",
+                    "SELECT id, title, username, user_id, created_at FROM channels WHERE username = ? AND user_id = ?",
                     (username, user_id)
                 )
                 row = cursor.fetchone()
@@ -308,7 +308,7 @@ class DatabaseManager:
                 # Si pas trouvé, essayer sans @
                 if not row:
                     cursor.execute(
-                        "SELECT id, name, username, user_id, created_at FROM channels WHERE username = ? AND user_id = ?",
+                        "SELECT id, title, username, user_id, created_at FROM channels WHERE username = ? AND user_id = ?",
                         (clean_username, user_id)
                     )
                     row = cursor.fetchone()
@@ -316,7 +316,7 @@ class DatabaseManager:
                 # Si pas trouvé, essayer avec @
                 if not row:
                     cursor.execute(
-                        "SELECT id, name, username, user_id, created_at FROM channels WHERE username = ? AND user_id = ?",
+                        "SELECT id, title, username, user_id, created_at FROM channels WHERE username = ? AND user_id = ?",
                         (with_at, user_id)
                     )
                     row = cursor.fetchone()
@@ -324,7 +324,7 @@ class DatabaseManager:
                 if row:
                     return {
                         "id": row[0],
-                        "name": row[1],
+                        "name": row[1],  # title dans la DB, mais on garde "name" pour la compatibilité
                         "username": row[2],
                         "user_id": row[3],
                         "created_at": row[4]
@@ -332,21 +332,21 @@ class DatabaseManager:
             else:
                 # Version sans created_at - même logique
                 cursor.execute(
-                    "SELECT id, name, username, user_id FROM channels WHERE username = ? AND user_id = ?",
+                    "SELECT id, title, username, user_id FROM channels WHERE username = ? AND user_id = ?",
                     (username, user_id)
                 )
                 row = cursor.fetchone()
                 
                 if not row:
                     cursor.execute(
-                        "SELECT id, name, username, user_id FROM channels WHERE username = ? AND user_id = ?",
+                        "SELECT id, title, username, user_id FROM channels WHERE username = ? AND user_id = ?",
                         (clean_username, user_id)
                     )
                     row = cursor.fetchone()
                 
                 if not row:
                     cursor.execute(
-                        "SELECT id, name, username, user_id FROM channels WHERE username = ? AND user_id = ?",
+                        "SELECT id, title, username, user_id FROM channels WHERE username = ? AND user_id = ?",
                         (with_at, user_id)
                     )
                     row = cursor.fetchone()
@@ -354,7 +354,7 @@ class DatabaseManager:
                 if row:
                     return {
                         "id": row[0],
-                        "name": row[1],
+                        "name": row[1],  # title dans la DB, mais on garde "name" pour la compatibilité
                         "username": row[2],
                         "user_id": row[3]
                     }
