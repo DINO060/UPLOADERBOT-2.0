@@ -98,6 +98,9 @@ Thumbs.db
 
 # Configuration files with sensitive data
 config.ini
+
+# Statistics files
+rename_stats.json
 settings.json
 secrets.json
 

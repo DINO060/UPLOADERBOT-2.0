@@ -1267,12 +1267,13 @@ async def handle_rename_input(update, context):
                     document=post['content'],
                     caption=caption_text,
                     reply_markup=reply_markup
-                )
+                                )
                 # Update rename stats (files renamed and storage used)
                 try:
                     await add_rename_stat(file_size_bytes)
                 except Exception:
                     pass
+
             elif post['type'] == 'text':
                 sent_message = await context.bot.send_message(
                     chat_id=update.effective_chat.id,
@@ -1912,16 +1913,9 @@ def analyze_posts_content(posts):
         logger.error(f"Erreur dans analyze_posts_content: {e}")
         return f"{len(posts)} fichier(s)"
 
-async def notify_admins_startup(app: Application) -> None:
-    """Notifie les admins du démarrage du bot avec les informations de statut"""
+async def notify_all_users_startup(app: Application) -> None:
+    """Notifie tous les utilisateurs du démarrage du bot avec les informations de statut"""
     try:
-        # Parser les IDs d'admin depuis la configuration
-        admin_ids = _parse_admin_ids(ADMIN_IDS_STR)
-        
-        if not admin_ids:
-            logger.info("ℹ️ Aucun admin configuré pour les notifications de démarrage")
-            return
-        
         # Informations de statut du bot
         from utils.scheduler_utils import DAILY_LIMIT_BYTES, COOLDOWN_SECONDS
         
@@ -1938,20 +1932,59 @@ async def notify_admins_startup(app: Application) -> None:
             f"📢 Force Join: @djd208"
         )
         
-        # Envoyer le message à tous les admins
-        for admin_id in admin_ids:
-            try:
-                await app.bot.send_message(
-                    chat_id=admin_id,
-                    text=status_message,
-                    parse_mode='HTML'
-                )
-                logger.info(f"✅ Notification de démarrage envoyée à l'admin {admin_id}")
-            except Exception as e:
-                logger.warning(f"⚠️ Impossible d'envoyer la notification à l'admin {admin_id}: {e}")
+        # Récupérer tous les utilisateurs depuis la base de données
+        import sqlite3
+        from config import settings
+        
+        try:
+            with sqlite3.connect(settings.db_config["path"]) as conn:
+                cursor = conn.cursor()
+                
+                # Récupérer tous les user_ids uniques depuis toutes les tables
+                cursor.execute("""
+                    SELECT DISTINCT user_id FROM (
+                        SELECT user_id FROM channels
+                        UNION
+                        SELECT user_id FROM user_timezones
+                        UNION
+                        SELECT user_id FROM user_usage
+                        UNION
+                        SELECT user_id FROM channel_thumbnails
+                    )
+                """)
+                
+                user_ids = [row[0] for row in cursor.fetchall()]
+                
+                if not user_ids:
+                    logger.info("ℹ️ Aucun utilisateur trouvé dans la base de données")
+                    return
+                
+                logger.info(f"📢 Envoi de la notification de démarrage à {len(user_ids)} utilisateurs")
+                
+                # Envoyer le message à tous les utilisateurs
+                success_count = 0
+                error_count = 0
+                
+                for user_id in user_ids:
+                    try:
+                        await app.bot.send_message(
+                            chat_id=user_id,
+                            text=status_message,
+                            parse_mode='HTML'
+                        )
+                        success_count += 1
+                        logger.info(f"✅ Notification envoyée à l'utilisateur {user_id}")
+                    except Exception as e:
+                        error_count += 1
+                        logger.warning(f"⚠️ Impossible d'envoyer la notification à l'utilisateur {user_id}: {e}")
+                
+                logger.info(f"📊 Résumé des notifications: {success_count} succès, {error_count} échecs")
+                
+        except Exception as db_error:
+            logger.error(f"❌ Erreur lors de la récupération des utilisateurs depuis la base de données: {db_error}")
                 
     except Exception as e:
-        logger.error(f"Erreur lors de la notification des admins: {e}")
+        logger.error(f"Erreur lors de la notification des utilisateurs: {e}")
 
 def main():
     """Fonction principale du bot"""
@@ -2013,8 +2046,8 @@ def main():
                 except Exception as e:
                     logger.warning(f"⚠️ Impossible de démarrer les clients avancés (post_init): {e}")
                 
-                # Notifier les admins du démarrage du bot
-                await notify_admins_startup(app)
+                # Notifier tous les utilisateurs du démarrage du bot
+                await notify_all_users_startup(app)
                 
             except Exception as e:
                 logger.error(f"Erreur lors de l'initialisation post-startup: {e}")
