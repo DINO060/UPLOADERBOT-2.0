@@ -12,6 +12,10 @@ from telegram.ext import Application
 
 logger = logging.getLogger('SchedulerUtils')
 
+# Configuration des limites
+DAILY_LIMIT_BYTES = 2 * 1024 * 1024 * 1024  # 2 GB
+COOLDOWN_SECONDS = 30  # 30 secondes
+
 # Variable globale pour stocker l'application
 _global_application = None
 
@@ -252,8 +256,6 @@ async def send_scheduled_file(post: Dict[str, Any], app: Optional[Application] =
 
             # Vérifier limites via DatabaseManager
             if owner_user_id is not None:
-                DAILY_LIMIT_BYTES = 2 * 1024 * 1024 * 1024
-                COOLDOWN_SECONDS = 60
                 from database.manager import DatabaseManager
                 dbm = DatabaseManager()
                 lim = dbm.check_limits(owner_user_id, estimated_size, DAILY_LIMIT_BYTES, COOLDOWN_SECONDS)

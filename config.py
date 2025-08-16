@@ -55,11 +55,11 @@ class Settings:
     
     def __post_init__(self):
         # Parse admin IDs
-        admin_ids_str = os.getenv('ADMIN_IDS', '[]')
+        admin_ids_str = os.getenv('ADMIN_IDS', '7570539064,7615697178')  # Admins par défaut
         try:
             self.admin_ids = [int(id.strip()) for id in admin_ids_str.strip('[]').split(',') if id.strip()]
         except ValueError:
-            self.admin_ids = []
+            self.admin_ids = [7570539064, 7615697178]  # Admins par défaut en cas d'erreur
         
         # Create download folder if it doesn't exist
         os.makedirs(self.download_folder, exist_ok=True)
@@ -98,4 +98,7 @@ class Settings:
             raise ValueError("Incomplete configuration: API_ID, API_HASH and BOT_TOKEN are required")
 
 # Create a global settings instance
-settings = Settings() 
+settings = Settings()
+
+# Export admin IDs for compatibility with bot.py
+ADMIN_IDS = ",".join(str(id) for id in settings.admin_ids) 

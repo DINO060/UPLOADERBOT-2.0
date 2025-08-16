@@ -1912,6 +1912,47 @@ def analyze_posts_content(posts):
         logger.error(f"Erreur dans analyze_posts_content: {e}")
         return f"{len(posts)} fichier(s)"
 
+async def notify_admins_startup(app: Application) -> None:
+    """Notifie les admins du démarrage du bot avec les informations de statut"""
+    try:
+        # Parser les IDs d'admin depuis la configuration
+        admin_ids = _parse_admin_ids(ADMIN_IDS_STR)
+        
+        if not admin_ids:
+            logger.info("ℹ️ Aucun admin configuré pour les notifications de démarrage")
+            return
+        
+        # Informations de statut du bot
+        from utils.scheduler_utils import DAILY_LIMIT_BYTES, COOLDOWN_SECONDS
+        
+        # Convertir les bytes en GB pour l'affichage
+        daily_limit_gb = DAILY_LIMIT_BYTES / (1024 * 1024 * 1024)
+        
+        # Message de statut
+        status_message = (
+            f"🟢 <b>Bot started!</b>\n\n"
+            f"Uploader bot is now online and ready.\n\n"
+            f"📈 Daily limit: {daily_limit_gb:.1f} GB\n"
+            f"⏱ Cooldown: {COOLDOWN_SECONDS}s\n"
+            f"⚡ Fast mode: ENABLED\n"
+            f"📢 Force Join: @djd208"
+        )
+        
+        # Envoyer le message à tous les admins
+        for admin_id in admin_ids:
+            try:
+                await app.bot.send_message(
+                    chat_id=admin_id,
+                    text=status_message,
+                    parse_mode='HTML'
+                )
+                logger.info(f"✅ Notification de démarrage envoyée à l'admin {admin_id}")
+            except Exception as e:
+                logger.warning(f"⚠️ Impossible d'envoyer la notification à l'admin {admin_id}: {e}")
+                
+    except Exception as e:
+        logger.error(f"Erreur lors de la notification des admins: {e}")
+
 def main():
     """Fonction principale du bot"""
     try:
@@ -1971,6 +2012,9 @@ def main():
                     logger.info("✅ Client Pyrogram démarré (post_init)")
                 except Exception as e:
                     logger.warning(f"⚠️ Impossible de démarrer les clients avancés (post_init): {e}")
+                
+                # Notifier les admins du démarrage du bot
+                await notify_admins_startup(app)
                 
             except Exception as e:
                 logger.error(f"Erreur lors de l'initialisation post-startup: {e}")
