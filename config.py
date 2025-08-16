@@ -2,9 +2,13 @@
 Configuration pour le bot multi-clients (Bot API, Pyrogram, Telethon)
 """
 import os
+import logging
 from dotenv import load_dotenv
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Any
+
+# Setup logger
+logger = logging.getLogger(__name__)
 
 load_dotenv()
 
@@ -54,12 +58,16 @@ class Settings:
     clients: Dict[str, ClientConfig] = None
     
     def __post_init__(self):
-        # Parse admin IDs
-        admin_ids_str = os.getenv('ADMIN_IDS', '7570539064,7615697178')  # Admins par défaut
-        try:
-            self.admin_ids = [int(id.strip()) for id in admin_ids_str.strip('[]').split(',') if id.strip()]
-        except ValueError:
-            self.admin_ids = [7570539064, 7615697178]  # Admins par défaut en cas d'erreur
+        # Parse admin IDs from environment variable
+        admin_ids_str = os.getenv('ADMIN_IDS')
+        if admin_ids_str:
+            try:
+                self.admin_ids = [int(id.strip()) for id in admin_ids_str.strip('[]').split(',') if id.strip()]
+            except ValueError:
+                logger.warning("Invalid ADMIN_IDS format in .env file")
+                self.admin_ids = []
+        else:
+            self.admin_ids = []
         
         # Create download folder if it doesn't exist
         os.makedirs(self.download_folder, exist_ok=True)
