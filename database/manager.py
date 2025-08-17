@@ -46,20 +46,36 @@ class DatabaseManager:
             )
             cursor = self.connection.cursor()
 
-            # Table des canaux
+            # Table des canaux (structure compatible avec channel_repo.py)
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS channels (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    name TEXT NOT NULL,
-                    username TEXT UNIQUE NOT NULL,
-                    user_id INTEGER NOT NULL,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    tg_chat_id INTEGER NOT NULL UNIQUE,
+                    title TEXT,
+                    username TEXT,
+                    bot_is_admin INTEGER NOT NULL DEFAULT 0,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                     thumbnail TEXT,
                     tag TEXT
                 )
             ''')
 
-            # Ajouter les colonnes thumbnail et tag si elles n'existent pas
+            # Migration : Ajouter les colonnes manquantes si elles n'existent pas
+            try:
+                cursor.execute("ALTER TABLE channels ADD COLUMN tg_chat_id INTEGER")
+            except sqlite3.OperationalError:
+                pass  # La colonne existe déjà
+            
+            try:
+                cursor.execute("ALTER TABLE channels ADD COLUMN title TEXT")
+            except sqlite3.OperationalError:
+                pass  # La colonne existe déjà
+            
+            try:
+                cursor.execute("ALTER TABLE channels ADD COLUMN bot_is_admin INTEGER DEFAULT 0")
+            except sqlite3.OperationalError:
+                pass  # La colonne existe déjà
+            
             try:
                 cursor.execute("ALTER TABLE channels ADD COLUMN thumbnail TEXT")
             except sqlite3.OperationalError:

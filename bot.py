@@ -79,7 +79,7 @@ from handlers.callback_handlers import handle_callback, send_post_now
 from handlers.message_handlers import handle_text, handle_media, handle_channel_info, handle_post_content, handle_tag_input
 from handlers.media_handler import send_file_smart
 from i18n import SUPPORTED, set_user_lang, get_user_lang, t
-from telegram.request import HTTPXRequest, HTTPVersion
+from telegram.request import HTTPXRequest
 from telegram.ext import ApplicationBuilder
 
 load_dotenv()
@@ -129,7 +129,6 @@ async def _post_shutdown(app):
 # Option pour réduire les httpx.ReadError
 request = HTTPXRequest(
     connection_pool_size=100,
-    http_version=HTTPVersion.HTTP_1_1,
     read_timeout=60.0,
 )
 # --- fin patch ---
