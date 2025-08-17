@@ -704,48 +704,80 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             # Gestion de l'affichage des posts planifiés
             return await show_scheduled_post(update, context)
 
-        # ✅ GESTIONNAIRE POUR LES RÉACTIONS DANS LE CANAL
-        elif callback_data.startswith("reaction_"):
+        # GESTIONNAIRE POUR LES RÉACTIONS (format alternatif: react_{post_index}_{reaction})
+        elif callback_data.startswith("react_"):
             try:
-                logger.info(f"🎯 GESTIONNAIRE RÉACTIONS ACTIVÉ - Callback: {callback_data}")
-                
-                # Format: reaction_{post_index}_{reaction}
                 parts = callback_data.split("_")
-                logger.info(f"🎯 Parts du callback: {parts}")
-                
+                # Format attendu: react_{post_index}_{reaction}
                 if len(parts) >= 3:
                     post_index = parts[1]
-                    reaction = "_".join(parts[2:])  # En cas de réaction avec underscore
-                    
-                    logger.info(f"⭐ Réaction cliquée: {reaction} pour le post {post_index}")
-                    logger.info(f"⭐ Utilisateur: {user_id}")
-                    logger.info(f"⭐ Chat: {query.message.chat_id if query.message else 'N/A'}")
-                    
-                    # Incrémenter le compteur de réactions
-                    if 'reaction_counts' not in context.bot_data:
-                        context.bot_data['reaction_counts'] = {}
-                        logger.info("📊 Initialisation du dictionnaire reaction_counts")
-                    
-                    reaction_key = f"{post_index}_{reaction}"
-                    current_count = context.bot_data['reaction_counts'].get(reaction_key, 0)
-                    context.bot_data['reaction_counts'][reaction_key] = current_count + 1
-                    
-                    # Afficher une notification à l'utilisateur
-                    notification_text = f"👍 {reaction} +1"
-                    await query.answer(notification_text)
-                    logger.info(f"✅ Notification envoyée: {notification_text}")
-                    
-                    logger.info(f"✅ Réaction {reaction} comptée pour le post {post_index} (total: {current_count + 1})")
+                    reaction = "_".join(parts[2:])
+                else:
+                    # Sécurité: fallback minimal
+                    post_index = "0"
+                    reaction = parts[-1] if parts else "?"
+
+                logger.info(f" React click: post={post_index}, reaction={reaction}, user={user_id}")
+
+                if 'reaction_counts' not in context.bot_data:
+                    context.bot_data['reaction_counts'] = {}
+                reaction_key = f"{post_index}_{reaction}"
+                context.bot_data['reaction_counts'][reaction_key] = context.bot_data['reaction_counts'].get(reaction_key, 0) + 1
+
+                # Retour utilisateur rapide pour éviter l'impression de 'rien ne se passe'
+                try:
+                    await query.answer(f"{reaction} enregistré ")
+                except Exception:
+                    pass
+
+                return MAIN_MENU
+            except Exception as e:
+                logger.error(f"Erreur gestion react_: {e}")
+                try:
+                    await query.answer(" Erreur réaction", show_alert=False)
+                except Exception:
+                    pass
+                return MAIN_MENU
+
+        # GESTIONNAIRE POUR LES RÉACTIONS DANS LE CANAL (format legacy: reaction_{post_index}_{reaction} ou court: reaction_{emoji})
+        elif callback_data.startswith("reaction_"):
+            try:
+                logger.info(f" GESTIONNAIRE RÉACTIONS ACTIVÉ - Callback: {callback_data}")
+                
+                parts = callback_data.split("_")
+                logger.info(f" Parts du callback: {parts}")
+                
+                if len(parts) >= 3:
+                    # Format complet: reaction_{post_index}_{reaction}
+                    post_index = parts[1]
+                    reaction = "_".join(parts[2:])
+                elif len(parts) == 2:
+                    # Format court: reaction_{emoji}
+                    post_index = "0"
+                    reaction = parts[1]
                     
                 else:
                     logger.warning(f"Format de callback de réaction invalide: {callback_data}")
                     logger.warning(f"Nombre de parts: {len(parts)}")
                     await query.answer("❌ Erreur de format")
-                    
+                    return MAIN_MENU
+
+                # Incrémenter le compteur et accuser réception
+                if 'reaction_counts' not in context.bot_data:
+                    context.bot_data['reaction_counts'] = {}
+                reaction_key = f"{post_index}_{reaction}"
+                context.bot_data['reaction_counts'][reaction_key] = context.bot_data['reaction_counts'].get(reaction_key, 0) + 1
+
+                try:
+                    await query.answer(f"{reaction} enregistré ✅")
+                except Exception:
+                    pass
+                return MAIN_MENU
             except Exception as e:
                 logger.error(f"Erreur lors du traitement de la réaction: {e}")
                 logger.exception("🔍 Traceback complet:")
                 await query.answer("❌ Erreur lors du traitement")
+                return MAIN_MENU
 
         # Si le callback n'est pas dans la liste des cas directement gérés
         logger.warning(f"Callback non géré directement : {callback_data}")
@@ -2744,6 +2776,70 @@ async def send_post_now(update, context, scheduled_post=None):
 
             # logger.debug(f"Post type: {post_type} | thumb: {thumbnail}")
 
+            # === Build inline keyboard (reactions + URL buttons) ===
+            keyboard = []
+
+            # Reactions (can be list or JSON string)
+            reactions = post.get('reactions')
+            if not reactions:
+                # Fallback to current_post in user_data (immediate flow often stores here)
+                reactions = context.user_data.get('current_post', {}).get('reactions', [])
+                logger.info(f"Fallback reactions from current_post: {reactions}")
+            try:
+                if isinstance(reactions, str):
+                    try:
+                        reactions = json.loads(reactions)
+                        logger.info(f"✅ Reactions parsed from JSON: {reactions}")
+                    except json.JSONDecodeError:
+                        logger.warning(f"❌ Could not parse reactions JSON: {reactions}")
+                        reactions = []
+                if reactions:
+                    # Normalize potential dict items to emoji string
+                    normalized_reactions = []
+                    for r in reactions:
+                        if isinstance(r, dict):
+                            emoji = r.get('emoji') or r.get('text') or r.get('label')
+                            if emoji:
+                                normalized_reactions.append(emoji)
+                        else:
+                            normalized_reactions.append(r)
+
+                    row = []
+                    for reaction in normalized_reactions:
+                        row.append(InlineKeyboardButton(reaction, callback_data=f"react_{post_index}_{reaction}"))
+                        if len(row) == 4:
+                            keyboard.append(row)
+                            row = []
+                    if row:
+                        keyboard.append(row)
+            except Exception as e:
+                logger.warning(f"Reaction keyboard build error: {e}")
+
+            # URL buttons (can be list of dicts or JSON string)
+            buttons = post.get('buttons')
+            if not buttons:
+                buttons = context.user_data.get('current_post', {}).get('buttons', [])
+                logger.info(f"Fallback URL buttons from current_post: {buttons}")
+            try:
+                if isinstance(buttons, str):
+                    try:
+                        buttons = json.loads(buttons)
+                        logger.info(f"✅ URL buttons parsed from JSON: {buttons}")
+                    except json.JSONDecodeError:
+                        logger.warning(f"❌ Could not parse buttons JSON: {buttons}")
+                        buttons = []
+                for btn in buttons or []:
+                    if isinstance(btn, dict):
+                        text = btn.get('text') or btn.get('label') or btn.get('title')
+                        url = btn.get('url') or btn.get('link')
+                        if text and url:
+                            keyboard.append([InlineKeyboardButton(text, url=url)])
+            except Exception as e:
+                logger.warning(f"URL buttons build error: {e}")
+
+            reply_markup = InlineKeyboardMarkup(keyboard) if keyboard else None
+            logger.info(f"Inline keyboard for post {post_index+1}: rows={len(keyboard)}, has_reply_markup={reply_markup is not None}")
+
             # Ajout du texte custom si défini pour ce canal
             custom_usernames = context.user_data.get('custom_usernames', {})
             channel_username = post.get("channel")
@@ -2759,15 +2855,15 @@ async def send_post_now(update, context, scheduled_post=None):
                     sent_message = None
                     if post_type == "photo":
                         async def do_send():
-                            return await context.bot.send_photo(chat_id=channel_to_send, photo=content, caption=caption)
+                            return await context.bot.send_photo(chat_id=channel_to_send, photo=content, caption=caption, reply_markup=reply_markup)
                         sent_message = await try_send_with_retry(do_send, f"photo #{post_index+1}")
                     elif post_type == "video":
                         async def do_send():
-                            return await context.bot.send_video(chat_id=channel_to_send, video=content, caption=caption)
+                            return await context.bot.send_video(chat_id=channel_to_send, video=content, caption=caption, reply_markup=reply_markup)
                         sent_message = await try_send_with_retry(do_send, f"video #{post_index+1}")
                     elif post_type == "document":
                         async def do_send():
-                            return await context.bot.send_document(chat_id=channel_to_send, document=content, caption=caption)
+                            return await context.bot.send_document(chat_id=channel_to_send, document=content, caption=caption, reply_markup=reply_markup)
                         sent_message = await try_send_with_retry(do_send, f"document #{post_index+1}")
                     if sent_message:
                         logger.info(f"✅ Envoi réussi du post {post_index + 1} avec thumbnail personnalisé")
@@ -2784,19 +2880,19 @@ async def send_post_now(update, context, scheduled_post=None):
                     sent_message = None
                     if post_type == "photo":
                         async def do_send():
-                            return await context.bot.send_photo(chat_id=channel_to_send, photo=content, caption=caption)
+                            return await context.bot.send_photo(chat_id=channel_to_send, photo=content, caption=caption, reply_markup=reply_markup)
                         sent_message = await try_send_with_retry(do_send, f"photo #{post_index+1}")
                     elif post_type == "video":
                         async def do_send():
-                            return await context.bot.send_video(chat_id=channel_to_send, video=content, caption=caption)
+                            return await context.bot.send_video(chat_id=channel_to_send, video=content, caption=caption, reply_markup=reply_markup)
                         sent_message = await try_send_with_retry(do_send, f"video #{post_index+1}")
                     elif post_type == "document":
                         async def do_send():
-                            return await context.bot.send_document(chat_id=channel_to_send, document=content, caption=caption)
+                            return await context.bot.send_document(chat_id=channel_to_send, document=content, caption=caption, reply_markup=reply_markup)
                         sent_message = await try_send_with_retry(do_send, f"document #{post_index+1}")
                     elif post_type == "text":
                         async def do_send():
-                            return await context.bot.send_message(chat_id=channel_to_send, text=content)
+                            return await context.bot.send_message(chat_id=channel_to_send, text=content, reply_markup=reply_markup)
                         sent_message = await try_send_with_retry(do_send, f"texte #{post_index+1}")
                     if sent_message:
                         success_count += 1
