@@ -46,36 +46,20 @@ class DatabaseManager:
             )
             cursor = self.connection.cursor()
 
-            # Table des canaux (structure compatible avec channel_repo.py)
+            # Table des canaux (même structure que mon_bot_telegram LAS COMPLET)
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS channels (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    tg_chat_id INTEGER NOT NULL UNIQUE,
-                    title TEXT,
-                    username TEXT,
-                    bot_is_admin INTEGER NOT NULL DEFAULT 0,
-                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    name TEXT NOT NULL,
+                    username TEXT UNIQUE NOT NULL,
+                    user_id INTEGER NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     thumbnail TEXT,
                     tag TEXT
                 )
             ''')
 
-            # Migration : Ajouter les colonnes manquantes si elles n'existent pas
-            try:
-                cursor.execute("ALTER TABLE channels ADD COLUMN tg_chat_id INTEGER")
-            except sqlite3.OperationalError:
-                pass  # La colonne existe déjà
-            
-            try:
-                cursor.execute("ALTER TABLE channels ADD COLUMN title TEXT")
-            except sqlite3.OperationalError:
-                pass  # La colonne existe déjà
-            
-            try:
-                cursor.execute("ALTER TABLE channels ADD COLUMN bot_is_admin INTEGER DEFAULT 0")
-            except sqlite3.OperationalError:
-                pass  # La colonne existe déjà
-            
+            # Ajouter les colonnes thumbnail et tag si elles n'existent pas
             try:
                 cursor.execute("ALTER TABLE channels ADD COLUMN thumbnail TEXT")
             except sqlite3.OperationalError:
@@ -207,15 +191,11 @@ class DatabaseManager:
 
     def add_channel(self, name: str, username: str, user_id: int) -> int:
         """Adds a new channel to the database"""
+        # Delegate to channel repository to avoid schema mismatch
         try:
-            cursor = self.connection.cursor()
-            cursor.execute(
-                "INSERT INTO channels (name, username, user_id) VALUES (?, ?, ?)",
-                (name, username, user_id)
-            )
-            self.connection.commit()
-            return cursor.lastrowid
-        except sqlite3.Error as e:
+            from database.channel_repo import add_channel as repo_add_channel
+            return repo_add_channel(name, username, user_id)
+        except Exception as e:
             logger.error(f"Error adding channel: {e}")
             raise DatabaseError(f"Error adding channel: {e}")
 

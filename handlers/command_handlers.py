@@ -7,7 +7,7 @@ from utils.message_utils import send_message, PostType, MessageError
 from database.manager import DatabaseManager
 from utils.error_handler import handle_error
 from conversation_states import MAIN_MENU, POST_CONTENT, SCHEDULE_SEND, SETTINGS, WAITING_THUMBNAIL, WAITING_CHANNEL_INFO
-from database.channel_repo import list_user_channels
+from database.channel_repo import list_user_channels, get_channel_by_username as repo_get_channel_by_username, add_channel as repo_add_channel
 from i18n import get_user_lang, t
 
 logger = logging.getLogger('TelegramBot')
@@ -339,9 +339,8 @@ class CommandHandlers:
             )
             return SETTINGS
 
-        db = DatabaseManager()
-        # Check duplicate
-        if db.get_channel_by_username(channel_username, user_id):
+        # Check duplicate using channel repository (authoritative for channels)
+        if repo_get_channel_by_username(channel_username, user_id):
             await update.message.reply_text(
                 "ℹ️ Channel already registered.")
             return SETTINGS
@@ -357,7 +356,8 @@ class CommandHandlers:
             except Exception:
                 pass
 
-            db.add_channel(name_to_use, channel_username, user_id)
+            # Persist channel using repository (manages membership and schema)
+            repo_add_channel(name_to_use, channel_username, user_id)
             await update.message.reply_text(
                 f"✅ Channel added!\n\n📺 {name_to_use} (@{channel_username})")
             return SETTINGS
