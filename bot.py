@@ -74,13 +74,65 @@ from handlers.thumbnail_handler import (
     handle_thumbnail_input,
     handle_add_thumbnail
 )
-from pyrogram import Client
+from pyrogram import Client as PyroClient
 from handlers.callback_handlers import handle_callback, send_post_now
 from handlers.message_handlers import handle_text, handle_media, handle_channel_info, handle_post_content, handle_tag_input
 from handlers.media_handler import send_file_smart
 from i18n import SUPPORTED, set_user_lang, get_user_lang, t
+from telegram.request import HTTPXRequest, HTTPVersion
+from telegram.ext import ApplicationBuilder
 
 load_dotenv()
+
+# --- PYROGRAM: démarrage/arrêt propre, un seul client global ---
+# Chemins/vars
+APP_DIR = os.getenv("APP_DIR", os.getcwd())
+PYRO_WORKDIR = os.path.join(APP_DIR, ".pyro")
+
+API_ID = int(os.getenv("API_ID", "0") or 0)
+API_HASH = os.getenv("API_HASH", "")
+
+# IMPORTANT: no_updates=True pour éviter tout polling ou dispatcher interne de Pyrogram
+PYRO = PyroClient(
+    "uploader",
+    api_id=API_ID,
+    api_hash=API_HASH,
+    no_updates=True,
+    workdir=PYRO_WORKDIR,
+)
+
+async def _post_init(app):
+    # Démarre Pyrogram une seule fois au démarrage de PTB
+    if API_ID and API_HASH:
+        try:
+            await PYRO.start()
+            logger.info("✅ Client Pyrogram global démarré avec succès")
+            
+            # Exposer le client global pour les autres modules
+            from utils.pyro_client import set_global_pyro_client
+            set_global_pyro_client(PYRO)
+            
+        except Exception as e:
+            # Évite de tuer PTB si Pyrogram ne sert pas (ou si creds manquent)
+            logger.warning(f"⚠️ Impossible de démarrer Pyrogram: {e}")
+            pass
+
+async def _post_shutdown(app):
+    # Arrêt propre avant fermeture de la loop PTB
+    try:
+        await PYRO.stop()
+        logger.info("✅ Client Pyrogram global arrêté proprement")
+    except Exception as e:
+        logger.warning(f"⚠️ Erreur lors de l'arrêt de Pyrogram: {e}")
+        pass
+
+# Option pour réduire les httpx.ReadError
+request = HTTPXRequest(
+    connection_pool_size=100,
+    http_version=HTTPVersion.HTTP_1_1,
+    read_timeout=60.0,
+)
+# --- fin patch ---
 
 # --- config & état (Force-Join & Admin) ---
 START_TIME = datetime.now(timezone.utc)
@@ -1989,8 +2041,15 @@ async def notify_all_users_startup(app: Application) -> None:
 def main():
     """Fonction principale du bot"""
     try:
-        # Configuration de l'application
-        application = Application.builder().token(settings.bot_token).build()
+        # Configuration de l'application avec Pyrogram global
+        application = (
+            ApplicationBuilder()
+            .token(settings.bot_token)
+            .request(request)
+            .post_init(_post_init)
+            .post_shutdown(_post_shutdown)
+            .build()
+        )
         # Init DB (channel repository)
         try:
             init_db()
@@ -2039,12 +2098,8 @@ def main():
                 # Planifier les tâches de maintenance
                 await schedule_maintenance_tasks(app)
 
-                # Démarrer le client Pyrogram dans la boucle existante
-                try:
-                    await init_clients()
-                    logger.info("✅ Client Pyrogram démarré (post_init)")
-                except Exception as e:
-                    logger.warning(f"⚠️ Impossible de démarrer les clients avancés (post_init): {e}")
+                # Pyrogram est maintenant démarré automatiquement via _post_init
+                logger.info("✅ Client Pyrogram géré automatiquement")
                 
                 # Notifier tous les utilisateurs du démarrage du bot
                 await notify_all_users_startup(app)
@@ -2186,17 +2241,7 @@ def main():
             except Exception as e:
                 logger.warning(f"⚠️ Impossible de planifier le nettoyage automatique: {e}")
 
-        # Initialisation du client Pyrogram pour les gros fichiers
-        async def init_clients():
-            try:
-                from utils.clients import client_manager
-                await client_manager.start_clients()
-                logger.info("✅ Client Pyrogram démarré pour la gestion des gros fichiers")
-            except Exception as e:
-                logger.warning(f"⚠️ Impossible de démarrer les clients avancés: {e}")
-                logger.warning("Les fichiers > 50MB ne pourront pas être traités avec thumbnail personnalisé")
-        
-        # Les clients sont démarrés dans post_init via la boucle existante (plus de boucle manuelle ici)
+        # Pyrogram est maintenant géré globalement via _post_init et _post_shutdown
 
         # Log des états de conversation pour débogage
         logger.info(f"Définition des états de conversation:")
