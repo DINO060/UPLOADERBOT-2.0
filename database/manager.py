@@ -365,21 +365,37 @@ class DatabaseManager:
             cursor = self.connection.cursor()
             user_ids = set()
 
-            # Collect from primary user-scoped tables
-            for table, column in (
-                ("channels", "user_id"),
-                ("user_timezones", "user_id"),
-                ("channel_thumbnails", "user_id"),
-                ("user_usage", "user_id"),
-            ):
+            # Prefer channel_members (new schema) for user ownership
+            try:
+                cursor.execute("SELECT DISTINCT user_id FROM channel_members")
+                for row in cursor.fetchall():
+                    if row and row[0] is not None:
+                        user_ids.add(int(row[0]))
+            except sqlite3.Error:
+                # channel_members may not exist in legacy schemas
+                pass
+
+            # Other user-scoped tables
+            for table in ("user_timezones", "channel_thumbnails", "user_usage"):
                 try:
-                    cursor.execute(f"SELECT DISTINCT {column} FROM {table}")
+                    cursor.execute(f"SELECT DISTINCT user_id FROM {table}")
                     for row in cursor.fetchall():
                         if row and row[0] is not None:
                             user_ids.add(int(row[0]))
                 except sqlite3.Error:
-                    # Table might not exist in older schemas; ignore
                     pass
+
+            # Legacy: only read channels.user_id if the column exists
+            try:
+                cursor.execute("PRAGMA table_info(channels)")
+                columns = [col[1] for col in cursor.fetchall()]
+                if "user_id" in columns:
+                    cursor.execute("SELECT DISTINCT user_id FROM channels")
+                    for row in cursor.fetchall():
+                        if row and row[0] is not None:
+                            user_ids.add(int(row[0]))
+            except sqlite3.Error:
+                pass
 
             return len(user_ids)
         except Exception as e:
