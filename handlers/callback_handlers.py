@@ -2009,13 +2009,34 @@ async def handle_create_publication(update: Update, context: ContextTypes.DEFAUL
     except Exception as e:
         logger.error(f"Erreur lors de l'affichage des canaux: {e}")
         
-        keyboard = [[InlineKeyboardButton("↩️ Menu principal", callback_data="main_menu")]]
-        error_message = "❌ Une erreur est survenue lors de la récupération des canaux."
+        # Vérifier si c'est un problème de base de données
+        if "no such table" in str(e).lower() or "database" in str(e).lower():
+            error_message = "❌ Erreur de base de données. Veuillez contacter l'administrateur."
+        elif "connection" in str(e).lower():
+            error_message = "❌ Erreur de connexion. Veuillez réessayer plus tard."
+        else:
+            error_message = "❌ Une erreur est survenue lors de la récupération des canaux."
         
-        await query.edit_message_text(
-            error_message,
-            reply_markup=InlineKeyboardMarkup(keyboard)
-        )
+        keyboard = [
+            [InlineKeyboardButton("🔄 Réessayer", callback_data="create_publication")],
+            [InlineKeyboardButton("↩️ Menu principal", callback_data="main_menu")]
+        ]
+        
+        try:
+            await query.edit_message_text(
+                error_message,
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
+        except Exception as edit_error:
+            logger.error(f"Erreur lors de l'édition du message: {edit_error}")
+            # Essayer d'envoyer un nouveau message
+            try:
+                await query.message.reply_text(
+                    error_message,
+                    reply_markup=InlineKeyboardMarkup(keyboard)
+                )
+            except Exception as reply_error:
+                logger.error(f"Erreur lors de l'envoi du message: {reply_error}")
         
         return MAIN_MENU
 
