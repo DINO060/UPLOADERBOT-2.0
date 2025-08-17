@@ -2324,6 +2324,10 @@ def main():
                 return ConversationHandler.END
             return await command_handlers.settings(update, context)
 
+        # Handler global des callback queries (pour capter les clics sur les posts de canal hors conversation)
+        # Placé en group=0 pour être traité avant le ConversationHandler
+        application.add_handler(CallbackQueryHandler(handle_callback), group=0)
+
         # Définition du ConversationHandler avec les différents états
         conv_handler = ConversationHandler(
             entry_points=[
@@ -2437,7 +2441,8 @@ def main():
         logger.info("ConversationHandler configuré avec états: %s",
                     ", ".join(str(state) for state in conv_handler.states.keys()))
 
-        application.add_handler(conv_handler, group=0)  # Priorité normale après handler global
+        # Le ConversationHandler est mis en group=1 pour laisser passer le handler global (group=0)
+        application.add_handler(conv_handler, group=1)
         
         # Register chat member updates and /connect
         register_my_chat_member(application)
