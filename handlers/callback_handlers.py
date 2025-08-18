@@ -909,48 +909,15 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                 try:
                     await query.answer("Erreur réaction", show_alert=False)
                 except Exception:
-                    pass
-                return MAIN_MENU
 
         # GESTIONNAIRE POUR LES RÉACTIONS DANS LE CANAL (format legacy: reaction_{post_index}_{reaction} ou court: reaction_{emoji})
         elif callback_data.startswith("reaction_"):
+            # Legacy handler removed: all reactions must use 'react_' persistent callbacks
             try:
-                logger.info(f" GESTIONNAIRE RÉACTIONS ACTIVÉ - Callback: {callback_data}")
-                
-                parts = callback_data.split("_")
-                logger.info(f" Parts du callback: {parts}")
-                
-                if len(parts) >= 3:
-                    # Format complet: reaction_{post_index}_{reaction}
-                    post_index = parts[1]
-                    reaction = "_".join(parts[2:])
-                elif len(parts) == 2:
-                    # Format court: reaction_{emoji}
-                    post_index = "0"
-                    reaction = parts[1]
-                    
-                else:
-                    logger.warning(f"Format de callback de réaction invalide: {callback_data}")
-                    logger.warning(f"Nombre de parts: {len(parts)}")
-                    await query.answer("❌ Erreur de format")
-                    return MAIN_MENU
-
-                # Incrémenter le compteur et accuser réception
-                if 'reaction_counts' not in context.bot_data:
-                    context.bot_data['reaction_counts'] = {}
-                reaction_key = f"{post_index}_{reaction}"
-                context.bot_data['reaction_counts'][reaction_key] = context.bot_data['reaction_counts'].get(reaction_key, 0) + 1
-
-                try:
-                    await query.answer(f"{reaction} enregistré ✅")
-                except Exception:
-                    pass
-                return MAIN_MENU
-            except Exception as e:
-                logger.error(f"Erreur lors du traitement de la réaction: {e}")
-                logger.exception("🔍 Traceback complet:")
-                await query.answer("❌ Erreur lors du traitement")
-                return MAIN_MENU
+                await query.answer("❌ Legacy reaction button. Please update.", show_alert=False)
+            except Exception:
+                pass
+            return MAIN_MENU
 
         # Si le callback n'est pas dans la liste des cas directement gérés
         logger.warning(f"Callback non géré directement : {callback_data}")
@@ -2860,14 +2827,14 @@ async def send_post_now(update, context, scheduled_post=None):
                 if update.message:
                     await update.message.reply_text(
                         "❌ Il n'y a pas de fichiers à envoyer.",
-                        reply_markup=InlineKeyboardMarkup([[
+                        reply_markup=InlineKeyboardMarkup([[ 
                             InlineKeyboardButton("↩️ Menu principal", callback_data="main_menu")
                         ]])
                     )
                 elif hasattr(update, 'callback_query') and update.callback_query:
                     await update.callback_query.message.reply_text(
                         "❌ Il n'y a pas de fichiers à envoyer.",
-                        reply_markup=InlineKeyboardMarkup([[
+                        reply_markup=InlineKeyboardMarkup([[ 
                             InlineKeyboardButton("↩️ Menu principal", callback_data="main_menu")
                         ]])
                     )
@@ -3216,8 +3183,20 @@ async def handle_send_scheduled_post(update: Update, context: ContextTypes.DEFAU
         
         if post_type == "photo":
             reactions = post.get("reactions", [])
-            from mon_bot_telegram.handlers.reaction_functions import create_reactions_keyboard
-            reply_markup = create_reactions_keyboard(reactions) if reactions else None
+            # Build persistent reaction keyboard using 'react_' callbacks
+            reply_markup = None
+            if reactions:
+                keyboard = []
+                row = []
+                pid = str(post.get("id") or post.get("post_id") or "0")
+                for reaction in reactions:
+                    row.append(InlineKeyboardButton(reaction, callback_data=f"react_{pid}_{reaction}"))
+                    if len(row) == 4:
+                        keyboard.append(row)
+                        row = []
+                if row:
+                    keyboard.append(row)
+                reply_markup = InlineKeyboardMarkup(keyboard)
 
             sent_message = await context.bot.send_photo(
                 chat_id=channel,
@@ -3227,8 +3206,20 @@ async def handle_send_scheduled_post(update: Update, context: ContextTypes.DEFAU
             )
         elif post_type == "video":
             reactions = post.get("reactions", [])
-            from mon_bot_telegram.handlers.reaction_functions import create_reactions_keyboard
-            reply_markup = create_reactions_keyboard(reactions) if reactions else None
+            # Build persistent reaction keyboard using 'react_' callbacks
+            reply_markup = None
+            if reactions:
+                keyboard = []
+                row = []
+                pid = str(post.get("id") or post.get("post_id") or "0")
+                for reaction in reactions:
+                    row.append(InlineKeyboardButton(reaction, callback_data=f"react_{pid}_{reaction}"))
+                    if len(row) == 4:
+                        keyboard.append(row)
+                        row = []
+                if row:
+                    keyboard.append(row)
+                reply_markup = InlineKeyboardMarkup(keyboard)
 
             sent_message = await context.bot.send_video(
                 chat_id=channel,
@@ -3238,8 +3229,20 @@ async def handle_send_scheduled_post(update: Update, context: ContextTypes.DEFAU
             )
         elif post_type == "document":
             reactions = post.get("reactions", [])
-            from mon_bot_telegram.handlers.reaction_functions import create_reactions_keyboard
-            reply_markup = create_reactions_keyboard(reactions) if reactions else None
+            # Build persistent reaction keyboard using 'react_' callbacks
+            reply_markup = None
+            if reactions:
+                keyboard = []
+                row = []
+                pid = str(post.get("id") or post.get("post_id") or "0")
+                for reaction in reactions:
+                    row.append(InlineKeyboardButton(reaction, callback_data=f"react_{pid}_{reaction}"))
+                    if len(row) == 4:
+                        keyboard.append(row)
+                        row = []
+                if row:
+                    keyboard.append(row)
+                reply_markup = InlineKeyboardMarkup(keyboard)
 
             sent_message = await context.bot.send_document(
                 chat_id=channel,
@@ -3249,8 +3252,21 @@ async def handle_send_scheduled_post(update: Update, context: ContextTypes.DEFAU
             )
         elif post_type == "text":
             reactions = post.get("reactions", [])
-            from mon_bot_telegram.handlers.reaction_functions import create_reactions_keyboard
-            reply_markup = create_reactions_keyboard(reactions) if reactions else None
+            # Build persistent reaction keyboard using 'react_' callbacks
+            reply_markup = None
+            if reactions:
+                keyboard = []
+                row = []
+                # Use post_id to identify this message's reactions consistently
+                pid = str(post.get("id") or post.get("post_id") or "0")
+                for reaction in reactions:
+                    row.append(InlineKeyboardButton(reaction, callback_data=f"react_{pid}_{reaction}"))
+                    if len(row) == 4:
+                        keyboard.append(row)
+                        row = []
+                if row:
+                    keyboard.append(row)
+                reply_markup = InlineKeyboardMarkup(keyboard)
 
             sent_message = await context.bot.send_message(
                 chat_id=channel,
