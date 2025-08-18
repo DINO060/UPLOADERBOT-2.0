@@ -812,6 +812,27 @@ class RateLimiter:
 rate_limiter = RateLimiter()
 
 # -----------------------------------------------------------------------------
+# DEBUG: global callback query logger
+# -----------------------------------------------------------------------------
+async def _debug_cbq(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Lightweight logger for all CallbackQuery updates.
+    Placed in group=0 to observe flow without blocking other handlers.
+    """
+    try:
+        q = update.callback_query
+        if not q:
+            return
+        data = getattr(q, "data", None)
+        user_id = getattr(getattr(q, "from_user", None), "id", None)
+        chat_id = getattr(getattr(q, "message", None), "chat", None)
+        chat_id = getattr(chat_id, "id", None)
+        msg_id = getattr(getattr(q, "message", None), "message_id", None)
+        logger.debug(f"CBQ data='{data}' from={user_id} chat={chat_id} msg={msg_id}")
+        # Do not answer() here to avoid interfering with real handlers that may answer
+    except Exception as e:
+        logger.warning(f"_debug_cbq error: {e}")
+
+# -----------------------------------------------------------------------------
 # FONCTIONS UTILITAIRES
 # -----------------------------------------------------------------------------
 def normalize_channel_username(channel_username):
