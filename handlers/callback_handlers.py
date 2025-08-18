@@ -2231,7 +2231,7 @@ async def planifier_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
                        p.content,
                        p.caption,
                        p.scheduled_time,
-                       c.name,
+                       COALESCE(c.name, c.title) AS channel_name,
                        c.username
                 FROM posts p
                 JOIN channels c ON p.channel_id = c.id
@@ -2344,7 +2344,7 @@ async def show_scheduled_post(update: Update, context: ContextTypes.DEFAULT_TYPE
         with sqlite3.connect(settings.db_config["path"]) as conn:
             cursor = conn.cursor()
             cursor.execute("""
-                SELECT p.id, p.type, p.content, p.caption, p.scheduled_time, c.name, c.username
+                SELECT p.id, COALESCE(NULLIF(p.post_type, ''), p.type) AS type, p.content, p.caption, p.scheduled_time, COALESCE(c.name, c.title) AS channel_name, c.username
                 FROM posts p
                 JOIN channels c ON p.channel_id = c.id
                 WHERE p.id = ?
@@ -3123,7 +3123,7 @@ async def handle_send_scheduled_post(update: Update, context: ContextTypes.DEFAU
                 with sqlite3.connect(settings.db_config["path"]) as conn:
                     cursor = conn.cursor()
                     cursor.execute("""
-                        SELECT c.username, c.name
+                        SELECT c.username, COALESCE(c.name, c.title) AS name
                         FROM posts p
                         JOIN channels c ON p.channel_id = c.id
                         WHERE p.id = ?
