@@ -85,14 +85,13 @@ def list_user_channels(user_id: int) -> Iterable[Dict[str, Any]]:
     with db() as cx:
         rows = cx.execute(
             """
-      SELECT c.id,c.tg_chat_id,c.title,c.username,c.bot_is_admin
+      SELECT c.id,c.name,c.username,c.user_id,c.created_at
       FROM channels c
-      JOIN channel_members m ON m.channel_id = c.id
-      WHERE m.user_id = ?
+      WHERE c.user_id = ?
     """,
             (user_id,),
         ).fetchall()
-        cols = ["id", "tg_chat_id", "title", "username", "bot_is_admin"]
+        cols = ["id", "name", "username", "user_id", "created_at"]
         return [dict(zip(cols, r)) for r in rows]
 
 
@@ -106,10 +105,9 @@ def get_channel_by_username(username: str, user_id: int) -> Optional[Dict[str, A
         # Essayer d'abord avec le format exact
         r = cx.execute(
             """
-            SELECT c.id, c.tg_chat_id, c.title, c.username, c.bot_is_admin
+            SELECT c.id, c.name, c.username, c.user_id, c.created_at
             FROM channels c
-            JOIN channel_members m ON m.channel_id = c.id
-            WHERE c.username = ? AND m.user_id = ?
+            WHERE c.username = ? AND c.user_id = ?
             """,
             (username, user_id)
         ).fetchone()
@@ -118,10 +116,9 @@ def get_channel_by_username(username: str, user_id: int) -> Optional[Dict[str, A
         if not r:
             r = cx.execute(
                 """
-                SELECT c.id, c.tg_chat_id, c.title, c.username, c.bot_is_admin
+                SELECT c.id, c.name, c.username, c.user_id, c.created_at
                 FROM channels c
-                JOIN channel_members m ON m.channel_id = c.id
-                WHERE c.username = ? AND m.user_id = ?
+                WHERE c.username = ? AND c.user_id = ?
                 """,
                 (clean_username, user_id)
             ).fetchone()
@@ -130,19 +127,16 @@ def get_channel_by_username(username: str, user_id: int) -> Optional[Dict[str, A
         if not r:
             r = cx.execute(
                 """
-                SELECT c.id, c.tg_chat_id, c.title, c.username, c.bot_is_admin
+                SELECT c.id, c.name, c.username, c.user_id, c.created_at
                 FROM channels c
-                JOIN channel_members m ON m.channel_id = c.id
-                WHERE c.username = ? AND m.user_id = ?
+                WHERE c.username = ? AND c.user_id = ?
                 """,
                 (with_at, user_id)
             ).fetchone()
         
         if r:
-            cols = ["id", "tg_chat_id", "title", "username", "bot_is_admin"]
+            cols = ["id", "name", "username", "user_id", "created_at"]
             result = dict(zip(cols, r))
-            # Ajouter user_id pour la compatibilité avec l'ancien format
-            result["user_id"] = user_id
             return result
         
         return None
@@ -151,59 +145,16 @@ def get_channel_by_username(username: str, user_id: int) -> Optional[Dict[str, A
 def add_channel(name: str, username: str, user_id: int) -> int:
     """Add a new channel for a user"""
     with db() as cx:
-        # Créer un tg_chat_id fictif (négatif pour les canaux ajoutés manuellement)
-        import random
-        fake_tg_chat_id = -random.randint(1000000, 9999999)
-
-        # Détecter la structure de la table channels
-        info = cx.execute("PRAGMA table_info(channels)").fetchall()
-        cols = {row[1]: row for row in info}  # name -> full row (cid,name,type,notnull,default,pk)
-
-        channel_id = None
-
-        # Cas 1: nouveau schéma présent (tg_chat_id,title,username,bot_is_admin)
-        if all(k in cols for k in ("tg_chat_id", "title", "username", "bot_is_admin")):
-            # Construire une liste de colonnes/valeurs dynamiquement pour satisfaire d'éventuelles contraintes legacy
-            insert_cols = ["tg_chat_id", "title", "username", "bot_is_admin"]
-            insert_vals = [fake_tg_chat_id, name, username, 0]
-
-            # Si la colonne legacy 'name' existe (souvent NOT NULL), l'alimenter avec 'name'
-            if "name" in cols:
-                insert_cols.append("name")
-                insert_vals.append(name)
-
-            # Si la colonne legacy 'user_id' existe (souvent NOT NULL), l'alimenter avec user_id
-            if "user_id" in cols:
-                insert_cols.append("user_id")
-                insert_vals.append(user_id)
-
-            placeholders = ",".join(["?"] * len(insert_cols))
-            sql = f"INSERT INTO channels ({','.join(insert_cols)}) VALUES ({placeholders})"
-            cursor = cx.execute(sql, tuple(insert_vals))
-            channel_id = cursor.lastrowid
-
-        # Cas 2: uniquement schéma legacy (name,username,user_id)
-        elif all(k in cols for k in ("name", "username", "user_id")):
-            cursor = cx.execute(
-                """
-                INSERT INTO channels (name, username, user_id)
-                VALUES (?, ?, ?)
-                """,
-                (name, username, user_id)
-            )
-            channel_id = cursor.lastrowid
-        else:
-            # Schéma inattendu
-            raise RuntimeError("Unsupported channels table schema")
-
-        # Associer l'utilisateur comme membre si la table channel_members existe
-        try:
-            cx.execute("SELECT 1 FROM channel_members LIMIT 1")
-            add_member_if_missing(channel_id, user_id)
-        except Exception:
-            # Table absente dans certains schémas; ignorer
-            pass
-
+        # Insérer le canal avec la structure simple
+        cursor = cx.execute(
+            """
+            INSERT INTO channels (name, username, user_id)
+            VALUES (?, ?, ?)
+            """,
+            (name, username, user_id)
+        )
+        channel_id = cursor.lastrowid
+        
         return channel_id
 
 

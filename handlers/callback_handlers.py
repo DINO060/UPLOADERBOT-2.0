@@ -38,6 +38,51 @@ logger = logging.getLogger(__name__)
 # Variable globale pour le scheduler manager
 _global_scheduler_manager = None
 
+# === Reactions DB helpers (SQLite persistent toggle) ===
+def _get_db_path() -> str:
+    """Resolve SQLite DB path from settings with sensible fallbacks."""
+    try:
+        if hasattr(settings, 'db_config') and isinstance(settings.db_config, dict):
+            p = settings.db_config.get('path')
+            if p:
+                return p
+    except Exception:
+        pass
+    try:
+        if hasattr(settings, 'db_path') and settings.db_path:
+            return settings.db_path
+    except Exception:
+        pass
+    # Fallback
+    return 'bot.db'
+
+def _ensure_reactions_schema(conn: sqlite3.Connection) -> None:
+    """Create tables for reactions if they do not exist."""
+    cur = conn.cursor()
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS reactions_counts (
+            chat_id    INTEGER NOT NULL,
+            message_id INTEGER NOT NULL,
+            emoji      TEXT    NOT NULL,
+            count      INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY (chat_id, message_id, emoji)
+        )
+        """
+    )
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS reactions_votes (
+            chat_id    INTEGER NOT NULL,
+            message_id INTEGER NOT NULL,
+            user_id    INTEGER NOT NULL,
+            emoji      TEXT,
+            PRIMARY KEY (chat_id, message_id, user_id)
+        )
+        """
+    )
+    conn.commit()
+
 # Fonction pour définir le scheduler manager global
 def set_global_scheduler_manager(scheduler_manager):
     """Sets the global scheduler manager"""
@@ -704,37 +749,154 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             # Gestion de l'affichage des posts planifiés
             return await show_scheduled_post(update, context)
 
-        # GESTIONNAIRE POUR LES RÉACTIONS (format alternatif: react_{post_index}_{reaction})
+        # GESTIONNAIRE POUR LES RÉACTIONS (format: react_{post_index}_{emoji}) - PERSISTENT/TOGGLE
         elif callback_data.startswith("react_"):
             try:
-                parts = callback_data.split("_")
-                # Format attendu: react_{post_index}_{reaction}
-                if len(parts) >= 3:
+                parts = callback_data.split("_", 2)
+                # Format attendu: react_{post_index}_{emoji...}
+                if len(parts) == 3:
                     post_index = parts[1]
-                    reaction = "_".join(parts[2:])
+                    emoji = parts[2]
                 else:
-                    # Sécurité: fallback minimal
+                    # Fallback minimal
                     post_index = "0"
-                    reaction = parts[-1] if parts else "?"
+                    emoji = parts[-1] if parts else "?"
 
-                logger.info(f" React click: post={post_index}, reaction={reaction}, user={user_id}")
+                msg = query.message
+                if not msg:
+                    await query.answer("❌ Erreur message", show_alert=False)
+                    return MAIN_MENU
 
-                if 'reaction_counts' not in context.bot_data:
-                    context.bot_data['reaction_counts'] = {}
-                reaction_key = f"{post_index}_{reaction}"
-                context.bot_data['reaction_counts'][reaction_key] = context.bot_data['reaction_counts'].get(reaction_key, 0) + 1
+                chat_id = msg.chat_id
+                message_id = msg.message_id
+                uid = user_id
 
-                # Retour utilisateur rapide pour éviter l'impression de 'rien ne se passe'
+                db_path = _get_db_path()
+                with sqlite3.connect(db_path) as conn:
+                    _ensure_reactions_schema(conn)
+                    cur = conn.cursor()
+                    # Transaction pour éviter les courses
+                    cur.execute("BEGIN IMMEDIATE")
+
+                    # Vote actuel de l'utilisateur
+                    cur.execute(
+                        "SELECT emoji FROM reactions_votes WHERE chat_id=? AND message_id=? AND user_id=?",
+                        (chat_id, message_id, uid),
+                    )
+                    row = cur.fetchone()
+                    prev_emoji = row[0] if row else None
+
+                    # S'assurer que les lignes de compteur existent
+                    cur.execute(
+                        "INSERT OR IGNORE INTO reactions_counts (chat_id, message_id, emoji, count) VALUES (?,?,?,0)",
+                        (chat_id, message_id, emoji),
+                    )
+                    if prev_emoji and prev_emoji != emoji:
+                        cur.execute(
+                            "INSERT OR IGNORE INTO reactions_counts (chat_id, message_id, emoji, count) VALUES (?,?,?,0)",
+                            (chat_id, message_id, prev_emoji),
+                        )
+
+                    action = "added"
+                    if prev_emoji == emoji:
+                        # Toggle OFF
+                        cur.execute(
+                            "DELETE FROM reactions_votes WHERE chat_id=? AND message_id=? AND user_id=?",
+                            (chat_id, message_id, uid),
+                        )
+                        cur.execute(
+                            "UPDATE reactions_counts SET count = CASE WHEN count>0 THEN count-1 ELSE 0 END WHERE chat_id=? AND message_id=? AND emoji=?",
+                            (chat_id, message_id, emoji),
+                        )
+                        action = "removed"
+                    else:
+                        # Switch or add
+                        if prev_emoji:
+                            # decrement previous
+                            cur.execute(
+                                "UPDATE reactions_counts SET count = CASE WHEN count>0 THEN count-1 ELSE 0 END WHERE chat_id=? AND message_id=? AND emoji=?",
+                                (chat_id, message_id, prev_emoji),
+                            )
+                            cur.execute(
+                                "UPDATE reactions_votes SET emoji=? WHERE chat_id=? AND message_id=? AND user_id=?",
+                                (emoji, chat_id, message_id, uid),
+                            )
+                            action = "switched"
+                        else:
+                            cur.execute(
+                                "INSERT OR REPLACE INTO reactions_votes (chat_id, message_id, user_id, emoji) VALUES (?,?,?,?)",
+                                (chat_id, message_id, uid, emoji),
+                            )
+                        # increment new
+                        cur.execute(
+                            "UPDATE reactions_counts SET count = count + 1 WHERE chat_id=? AND message_id=? AND emoji=?",
+                            (chat_id, message_id, emoji),
+                        )
+
+                    conn.commit()
+
+                    # Récupérer les compteurs des emojis présents dans le clavier actuel
+                    current_kb = getattr(msg, 'reply_markup', None)
+                    inline_kb = getattr(current_kb, 'inline_keyboard', None) if current_kb else None
+                    emojis_in_kb = []
+                    if inline_kb:
+                        for row_btns in inline_kb:
+                            for btn in row_btns:
+                                btn_data = getattr(btn, 'callback_data', None)
+                                if btn_data and btn_data.startswith(f"react_{post_index}_"):
+                                    e = btn_data.split("_", 2)[2]
+                                    emojis_in_kb.append(e)
+
+                    counts: dict[str, int] = {}
+                    if emojis_in_kb:
+                        placeholders = ",".join(["?"] * len(emojis_in_kb))
+                        cur.execute(
+                            f"SELECT emoji, count FROM reactions_counts WHERE chat_id=? AND message_id=? AND emoji IN ({placeholders})",
+                            (chat_id, message_id, *emojis_in_kb),
+                        )
+                        for e, c in cur.fetchall() or []:
+                            counts[e] = int(c or 0)
+
+                # Réponse utilisateur
                 try:
-                    await query.answer(f"{reaction} enregistré ")
+                    if action == "removed":
+                        await query.answer(f"Removed {emoji}")
+                    elif action == "switched":
+                        await query.answer(f"Switched to {emoji}")
+                    else:
+                        await query.answer(f"Added {emoji}")
                 except Exception:
                     pass
 
+                # Mettre à jour le clavier avec les compteurs
+                try:
+                    if inline_kb:
+                        new_keyboard = []
+                        for row_btns in inline_kb:
+                            new_row = []
+                            for btn in row_btns:
+                                try:
+                                    btn_data = getattr(btn, 'callback_data', None)
+                                    btn_text = getattr(btn, 'text', '')
+                                    if btn_data and btn_data.startswith(f"react_{post_index}_"):
+                                        e = btn_data.split("_", 2)[2]
+                                        c = counts.get(e, 0)
+                                        label = f"{e} {c}" if c > 0 else f"{e}"
+                                        new_row.append(InlineKeyboardButton(label, callback_data=btn_data))
+                                    else:
+                                        new_row.append(btn)
+                                except Exception:
+                                    new_row.append(btn)
+                            new_keyboard.append(new_row)
+                        await query.edit_message_reply_markup(reply_markup=InlineKeyboardMarkup(new_keyboard))
+                except Exception as e:
+                    logger.warning(f"Échec mise à jour du clavier réactions (persist): {e}")
+
                 return MAIN_MENU
             except Exception as e:
-                logger.error(f"Erreur gestion react_: {e}")
+                logger.error(f"Erreur gestion react_ (persistent): {e}")
                 try:
-                    await query.answer(" Erreur réaction", show_alert=False)
+                    await query.answer("Erreur réaction", show_alert=False)
                 except Exception:
                     pass
                 return MAIN_MENU
