@@ -752,6 +752,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         # GESTIONNAIRE POUR LES RÉACTIONS (format: react_{post_index}_{emoji}) - PERSISTENT/TOGGLE
         elif callback_data.startswith("react_"):
             try:
+                logger.debug(f"[react_] callback received: data='{callback_data}', user_id={user_id}")
                 parts = callback_data.split("_", 2)
                 # Format attendu: react_{post_index}_{emoji...}
                 if len(parts) == 3:
@@ -761,6 +762,8 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                     # Fallback minimal
                     post_index = "0"
                     emoji = parts[-1] if parts else "?"
+
+                logger.debug(f"[react_] parsed -> post_index='{post_index}', emoji='{emoji}'")
 
                 msg = query.message
                 if not msg:
@@ -772,6 +775,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                 uid = user_id
 
                 db_path = _get_db_path()
+                logger.debug(f"[react_] DB path='{db_path}', chat_id={chat_id}, message_id={message_id}, uid={uid}")
                 with sqlite3.connect(db_path) as conn:
                     _ensure_reactions_schema(conn)
                     cur = conn.cursor()
@@ -785,6 +789,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                     )
                     row = cur.fetchone()
                     prev_emoji = row[0] if row else None
+                    logger.debug(f"[react_] previous vote -> prev_emoji='{prev_emoji}'")
 
                     # S'assurer que les lignes de compteur existent
                     cur.execute(
@@ -809,6 +814,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                             (chat_id, message_id, emoji),
                         )
                         action = "removed"
+                        logger.debug(f"[react_] action taken: {action} for emoji='{emoji}'")
                     else:
                         # Switch or add
                         if prev_emoji:
@@ -822,6 +828,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                                 (emoji, chat_id, message_id, uid),
                             )
                             action = "switched"
+                            logger.debug(f"[react_] action taken: {action} from prev_emoji='{prev_emoji}' to emoji='{emoji}'")
                         else:
                             cur.execute(
                                 "INSERT OR REPLACE INTO reactions_votes (chat_id, message_id, user_id, emoji) VALUES (?,?,?,?)",
@@ -834,6 +841,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                         )
 
                     conn.commit()
+                    logger.debug(f"[react_] transaction committed; action='{action}'")
 
                     # Récupérer les compteurs des emojis présents dans le clavier actuel
                     current_kb = getattr(msg, 'reply_markup', None)
@@ -846,6 +854,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                                 if btn_data and btn_data.startswith(f"react_{post_index}_"):
                                     e = btn_data.split("_", 2)[2]
                                     emojis_in_kb.append(e)
+                    logger.debug(f"[react_] emojis present in keyboard: {emojis_in_kb}")
 
                     counts: dict[str, int] = {}
                     if emojis_in_kb:
@@ -856,6 +865,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                         )
                         for e, c in cur.fetchall() or []:
                             counts[e] = int(c or 0)
+                    logger.debug(f"[react_] fetched counts: {counts}")
 
                 # Réponse utilisateur
                 try:
@@ -889,12 +899,13 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                                     new_row.append(btn)
                             new_keyboard.append(new_row)
                         await query.edit_message_reply_markup(reply_markup=InlineKeyboardMarkup(new_keyboard))
+                        logger.debug("[react_] inline keyboard updated with new counts")
                 except Exception as e:
                     logger.warning(f"Échec mise à jour du clavier réactions (persist): {e}")
 
                 return MAIN_MENU
             except Exception as e:
-                logger.error(f"Erreur gestion react_ (persistent): {e}")
+                logger.error(f"Erreur gestion react_ (persistent) for data='{callback_data}': {e}")
                 try:
                     await query.answer("Erreur réaction", show_alert=False)
                 except Exception:
