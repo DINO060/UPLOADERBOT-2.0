@@ -909,6 +909,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                 try:
                     await query.answer("Erreur réaction", show_alert=False)
                 except Exception:
+                    pass
 
         # GESTIONNAIRE POUR LES RÉACTIONS DANS LE CANAL (format legacy: reaction_{post_index}_{reaction} ou court: reaction_{emoji})
         elif callback_data.startswith("reaction_"):

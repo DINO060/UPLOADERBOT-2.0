@@ -2324,6 +2324,9 @@ def main():
                 return ConversationHandler.END
             return await command_handlers.settings(update, context)
 
+        # Handler global DEBUG: log all callback queries (helps diagnose capture/order issues)
+        application.add_handler(CallbackQueryHandler(_debug_cbq, pattern=".*"), group=0)
+
         # Handler global des callback queries (pour capter les clics sur les posts de canal hors conversation)
         # Placé en group=0 pour être traité avant le ConversationHandler
         application.add_handler(CallbackQueryHandler(handle_callback), group=0)
