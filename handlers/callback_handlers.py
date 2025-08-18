@@ -2235,9 +2235,10 @@ async def planifier_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
                        c.username
                 FROM posts p
                 JOIN channels c ON p.channel_id = c.id
+                LEFT JOIN channel_members cm ON cm.channel_id = c.id
                 WHERE p.status = 'pending'
                   AND p.scheduled_time IS NOT NULL
-                  AND c.user_id = ?
+                  AND COALESCE(c.user_id, cm.user_id) = ?
                 ORDER BY p.scheduled_time
                 """,
                 (update.effective_user.id,)

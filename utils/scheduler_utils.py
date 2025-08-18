@@ -137,7 +137,7 @@ async def send_scheduled_file(post: Dict[str, Any], app: Optional[Application] =
                         SELECT p.id,
                                COALESCE(NULLIF(p.post_type, ''), p.type) AS post_type,
                                p.content, p.caption, p.scheduled_time,
-                               c.name, c.username, p.buttons, p.reactions
+                               COALESCE(c.name, c.title) AS channel_name, c.username, p.buttons, p.reactions
                         FROM posts p
                         JOIN channels c ON p.channel_id = c.id
                         WHERE p.id = ?
@@ -148,7 +148,7 @@ async def send_scheduled_file(post: Dict[str, Any], app: Optional[Application] =
                         """
                         SELECT p.id, p.post_type AS post_type,
                                p.content, p.caption, p.scheduled_time,
-                               c.name, c.username, p.buttons, p.reactions
+                               COALESCE(c.name, c.title) AS channel_name, c.username, p.buttons, p.reactions
                         FROM posts p
                         JOIN channels c ON p.channel_id = c.id
                         WHERE p.id = ?
@@ -160,7 +160,7 @@ async def send_scheduled_file(post: Dict[str, Any], app: Optional[Application] =
                         """
                         SELECT p.id, p.type AS post_type,
                                p.content, p.caption, p.scheduled_time,
-                               c.name, c.username, p.buttons, p.reactions
+                               COALESCE(c.name, c.title) AS channel_name, c.username, p.buttons, p.reactions
                         FROM posts p
                         JOIN channels c ON p.channel_id = c.id
                         WHERE p.id = ?
@@ -241,9 +241,37 @@ async def send_scheduled_file(post: Dict[str, Any], app: Optional[Application] =
             db_path = settings.db_config.get("path", "bot.db")
             with _sqlite.connect(db_path) as _conn:
                 _cur = _conn.cursor()
-                _cur.execute("SELECT user_id FROM channels WHERE username = ?", (channel.lstrip('@'),))
-                _row = _cur.fetchone()
-                owner_user_id = _row[0] if _row else None
+                # Détecter si channels.user_id existe
+                try:
+                    _cur.execute("PRAGMA table_info(channels)")
+                    _cols = [c[1] for c in _cur.fetchall()]
+                except Exception:
+                    _cols = []
+
+                clean_un = channel.lstrip('@') if channel else None
+                owner_user_id = None
+                if 'user_id' in _cols:
+                    # Schéma récent: user_id sur channels
+                    _cur.execute("SELECT user_id FROM channels WHERE username = ?", (clean_un,))
+                    _row = _cur.fetchone()
+                    owner_user_id = _row[0] if _row else None
+                else:
+                    # Legacy: user_id via channel_members
+                    try:
+                        _cur.execute(
+                            """
+                            SELECT cm.user_id
+                            FROM channels c
+                            JOIN channel_members cm ON cm.channel_id = c.id
+                            WHERE c.username = ?
+                            LIMIT 1
+                            """,
+                            (clean_un,)
+                        )
+                        _row = _cur.fetchone()
+                        owner_user_id = _row[0] if _row else None
+                    except Exception:
+                        owner_user_id = None
 
             # Estimer la taille du fichier si c'est un média
             estimated_size = 0

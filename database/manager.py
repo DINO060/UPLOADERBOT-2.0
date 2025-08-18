@@ -203,16 +203,52 @@ class DatabaseManager:
         """Gets channel information"""
         try:
             cursor = self.connection.cursor()
-            cursor.execute("SELECT * FROM channels WHERE id = ?", (channel_id,))
+            # Detect schema and channel_members presence
+            cursor.execute("PRAGMA table_info(channels)")
+            cols = [c[1] for c in cursor.fetchall()]
+            has_created = 'created_at' in cols
+            has_user_id = 'user_id' in cols
+            has_title = 'title' in cols
+
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='channel_members'")
+            has_members = cursor.fetchone() is not None
+
+            select_created = ", c.created_at" if has_created else ""
+            if has_user_id:
+                cursor.execute(
+                    f"""
+                    SELECT c.id, COALESCE(c.name, c.title) AS name, c.username, c.user_id{select_created}
+                    FROM channels c
+                    WHERE c.id = ?
+                    """,
+                    (channel_id,)
+                )
+            elif has_members and has_title:
+                cursor.execute(
+                    f"""
+                    SELECT c.id, c.title AS name, c.username, cm.user_id{select_created}
+                    FROM channels c
+                    LEFT JOIN channel_members cm ON cm.channel_id = c.id
+                    WHERE c.id = ?
+                    LIMIT 1
+                    """,
+                    (channel_id,)
+                )
+            else:
+                # Minimal fallback
+                cursor.execute(
+                    "SELECT id, COALESCE(name, title) AS name, username FROM channels WHERE id = ?",
+                    (channel_id,)
+                )
             row = cursor.fetchone()
             if row:
-                return {
-                    "id": row[0],
-                    "name": row[1],
-                    "username": row[2],
-                    "user_id": row[3],
-                    "created_at": row[4]
-                }
+                # Map indices depending on selected columns
+                result = {"id": row[0], "name": row[1], "username": row[2]}
+                if len(row) >= 4:
+                    result["user_id"] = row[3]
+                if len(row) >= 5:
+                    result["created_at"] = row[4]
+                return result
             return None
         except sqlite3.Error as e:
             logger.error(f"Error retrieving channel: {e}")
@@ -222,40 +258,45 @@ class DatabaseManager:
         """Lists all channels of a user"""
         try:
             cursor = self.connection.cursor()
-            # Vérifier d'abord si la colonne created_at existe
+            # Detect schema
             cursor.execute("PRAGMA table_info(channels)")
             columns = [col[1] for col in cursor.fetchall()]
-            
-            if 'created_at' in columns:
+            has_created = 'created_at' in columns
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='channel_members'")
+            has_members = cursor.fetchone() is not None
+
+            select_created = ", c.created_at" if has_created else ""
+            if has_members:
                 cursor.execute(
-                    "SELECT id, name, username, user_id, created_at FROM channels WHERE user_id = ? ORDER BY name",
+                    f"""
+                    SELECT c.id, COALESCE(c.name, c.title) AS name, c.username,
+                           COALESCE(c.user_id, cm.user_id) AS user_id{select_created}
+                    FROM channels c
+                    LEFT JOIN channel_members cm ON cm.channel_id = c.id
+                    WHERE COALESCE(c.user_id, cm.user_id) = ?
+                    ORDER BY name
+                    """,
                     (user_id,)
                 )
-                return [
-                    {
-                        "id": row[0],
-                        "name": row[1],
-                        "username": row[2],
-                        "user_id": row[3],
-                        "created_at": row[4]
-                    }
-                    for row in cursor.fetchall()
-                ]
             else:
-                # Version sans created_at
                 cursor.execute(
-                    "SELECT id, name, username, user_id FROM channels WHERE user_id = ? ORDER BY name",
+                    f"""
+                    SELECT c.id, COALESCE(c.name, c.title) AS name, c.username,
+                           c.user_id{select_created}
+                    FROM channels c
+                    WHERE c.user_id = ?
+                    ORDER BY name
+                    """,
                     (user_id,)
                 )
-                return [
-                    {
-                        "id": row[0],
-                        "name": row[1],
-                        "username": row[2],
-                        "user_id": row[3]
-                    }
-                    for row in cursor.fetchall()
-                ]
+            rows = cursor.fetchall()
+            results = []
+            for row in rows:
+                item = {"id": row[0], "name": row[1], "username": row[2], "user_id": row[3]}
+                if has_created and len(row) >= 5:
+                    item["created_at"] = row[4]
+                results.append(item)
+            return results
         except sqlite3.Error as e:
             logger.error(f"Error listing channels: {e}")
             raise DatabaseError(f"Error listing channels: {e}")
@@ -264,17 +305,33 @@ class DatabaseManager:
         """Deletes a channel and all its associated publications"""
         try:
             cursor = self.connection.cursor()
-            # Vérifier que le canal appartient bien à l'utilisateur
-            cursor.execute("SELECT id FROM channels WHERE id = ? AND user_id = ?", (channel_id, user_id))
+            # Detect channel_members table
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='channel_members'")
+            has_members = cursor.fetchone() is not None
+
+            # Verify ownership
+            if has_members:
+                cursor.execute(
+                    """
+                    SELECT 1
+                    FROM channels c
+                    LEFT JOIN channel_members cm ON cm.channel_id = c.id
+                    WHERE c.id = ? AND COALESCE(c.user_id, cm.user_id) = ?
+                    LIMIT 1
+                    """,
+                    (channel_id, user_id)
+                )
+            else:
+                cursor.execute("SELECT 1 FROM channels WHERE id = ? AND user_id = ?", (channel_id, user_id))
             if not cursor.fetchone():
                 return False
-            
-            # Supprimer les publications associées
+
+            # Delete posts
             cursor.execute("DELETE FROM posts WHERE channel_id = ?", (channel_id,))
-            
-            # Supprimer le canal
-            cursor.execute("DELETE FROM channels WHERE id = ? AND user_id = ?", (channel_id, user_id))
-            
+
+            # Delete channel (no user_id constraint for legacy safety)
+            cursor.execute("DELETE FROM channels WHERE id = ?", (channel_id,))
+
             self.connection.commit()
             return cursor.rowcount > 0
         except sqlite3.Error as e:
@@ -390,19 +447,37 @@ class DatabaseManager:
         """Définit le tag d'un canal"""
         try:
             cursor = self.connection.cursor()
-            # Nettoyer le username (enlever @ si présent)
             clean_username = username.lstrip('@')
-            # Essayer sans @
-            cursor.execute(
-                "UPDATE channels SET tag = ? WHERE username = ? AND user_id = ?",
-                (tag, clean_username, user_id)
-            )
-            if cursor.rowcount == 0:
-                # Essayer avec @
-                with_at = f"@{clean_username}"
+            # Detect presence of channels.user_id and channel_members
+            cursor.execute("PRAGMA table_info(channels)")
+            cols = [c[1] for c in cursor.fetchall()]
+            has_user_id = 'user_id' in cols
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='channel_members'")
+            has_members = cursor.fetchone() is not None
+
+            if has_user_id:
                 cursor.execute(
-                    "UPDATE channels SET tag = ? WHERE username = ? AND user_id = ?",
-                    (tag, with_at, user_id)
+                    "UPDATE channels SET tag = ? WHERE username IN (?, ?) AND user_id = ?",
+                    (tag, clean_username, f"@{clean_username}", user_id)
+                )
+            elif has_members:
+                cursor.execute(
+                    """
+                    UPDATE channels
+                    SET tag = ?
+                    WHERE username IN (?, ?)
+                      AND EXISTS (
+                        SELECT 1 FROM channel_members cm
+                        WHERE cm.channel_id = channels.id AND cm.user_id = ?
+                      )
+                    """,
+                    (tag, clean_username, f"@{clean_username}", user_id)
+                )
+            else:
+                # Fallback: update by username only
+                cursor.execute(
+                    "UPDATE channels SET tag = ? WHERE username IN (?, ?)",
+                    (tag, clean_username, f"@{clean_username}")
                 )
             self.connection.commit()
             return cursor.rowcount > 0
@@ -414,13 +489,38 @@ class DatabaseManager:
         """Gets a channel's tag"""
         try:
             cursor = self.connection.cursor()
-            # Nettoyer le username (enlever @ si présent)
             clean_username = username.lstrip('@')
-            
-            cursor.execute(
-                "SELECT tag FROM channels WHERE username = ? AND user_id = ?",
-                (clean_username, user_id)
-            )
+            # Detect presence of channels.user_id and channel_members
+            cursor.execute("PRAGMA table_info(channels)")
+            cols = [c[1] for c in cursor.fetchall()]
+            has_user_id = 'user_id' in cols
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='channel_members'")
+            has_members = cursor.fetchone() is not None
+
+            if has_user_id:
+                cursor.execute(
+                    "SELECT tag FROM channels WHERE username IN (?, ?) AND user_id = ?",
+                    (clean_username, f"@{clean_username}", user_id)
+                )
+            elif has_members:
+                cursor.execute(
+                    """
+                    SELECT c.tag
+                    FROM channels c
+                    WHERE c.username IN (?, ?)
+                      AND EXISTS (
+                        SELECT 1 FROM channel_members cm
+                        WHERE cm.channel_id = c.id AND cm.user_id = ?
+                      )
+                    LIMIT 1
+                    """,
+                    (clean_username, f"@{clean_username}", user_id)
+                )
+            else:
+                cursor.execute(
+                    "SELECT tag FROM channels WHERE username IN (?, ?) LIMIT 1",
+                    (clean_username, f"@{clean_username}")
+                )
             row = cursor.fetchone()
             return row[0] if row and row[0] else None
         except sqlite3.Error as e:
@@ -671,16 +771,35 @@ class DatabaseManager:
         """Récupère les publications planifiées d'un utilisateur"""
         try:
             cursor = self.connection.cursor()
-            cursor.execute(
-                """
-                SELECT p.*, c.username 
-                FROM posts p 
-                JOIN channels c ON p.channel_id = c.id 
-                WHERE p.status = 'pending' AND c.user_id = ? AND p.scheduled_time IS NOT NULL
-                ORDER BY p.scheduled_time
-                """,
-                (user_id,)
-            )
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='channel_members'")
+            has_members = cursor.fetchone() is not None
+            if has_members:
+                cursor.execute(
+                    """
+                    SELECT p.*, c.username
+                    FROM posts p
+                    JOIN channels c ON p.channel_id = c.id
+                    LEFT JOIN channel_members cm ON cm.channel_id = c.id
+                    WHERE p.status = 'pending'
+                      AND p.scheduled_time IS NOT NULL
+                      AND COALESCE(c.user_id, cm.user_id) = ?
+                    ORDER BY p.scheduled_time
+                    """,
+                    (user_id,)
+                )
+            else:
+                cursor.execute(
+                    """
+                    SELECT p.*, c.username
+                    FROM posts p
+                    JOIN channels c ON p.channel_id = c.id
+                    WHERE p.status = 'pending'
+                      AND p.scheduled_time IS NOT NULL
+                      AND c.user_id = ?
+                    ORDER BY p.scheduled_time
+                    """,
+                    (user_id,)
+                )
             return [
                 {
                     "id": row[0],
