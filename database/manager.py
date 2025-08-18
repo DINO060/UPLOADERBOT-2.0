@@ -285,75 +285,59 @@ class DatabaseManager:
         """Gets a channel by its username for a specific user"""
         try:
             cursor = self.connection.cursor()
-            # Essayer avec le username tel quel ET avec/sans @
+            # Normaliser variantes @username / username
             clean_username = username.lstrip('@')
             with_at = f"@{clean_username}" if not username.startswith('@') else username
-            
-            # Vérifier d'abord si la colonne created_at existe
+
+            # Détecter le schéma de la table channels
             cursor.execute("PRAGMA table_info(channels)")
             columns = [col[1] for col in cursor.fetchall()]
-            
-            if 'created_at' in columns:
-                # Essayer d'abord avec le format exact
-                cursor.execute(
-                    "SELECT id, title, username, user_id, created_at FROM channels WHERE username = ? AND user_id = ?",
-                    (username, user_id)
-                )
-                row = cursor.fetchone()
-                
-                # Si pas trouvé, essayer sans @
-                if not row:
+
+            has_name = 'name' in columns
+            has_title = 'title' in columns
+            has_user_id = 'user_id' in columns
+            has_created_at = 'created_at' in columns
+
+            row = None
+            if has_name and has_user_id:
+                # Schéma type: channels(id,name,username,user_id,created_at)
+                select_cols = "id, name, username, user_id" + (", created_at" if has_created_at else "")
+                for uname in (username, clean_username, with_at):
                     cursor.execute(
-                        "SELECT id, title, username, user_id, created_at FROM channels WHERE username = ? AND user_id = ?",
-                        (clean_username, user_id)
+                        f"SELECT {select_cols} FROM channels WHERE username = ? AND user_id = ?",
+                        (uname, user_id),
                     )
                     row = cursor.fetchone()
-                
-                # Si pas trouvé, essayer avec @
-                if not row:
-                    cursor.execute(
-                        "SELECT id, title, username, user_id, created_at FROM channels WHERE username = ? AND user_id = ?",
-                        (with_at, user_id)
-                    )
-                    row = cursor.fetchone()
-                
+                    if row:
+                        break
                 if row:
-                    return {
-                        "id": row[0],
-                        "name": row[1],  # title dans la DB, mais on garde "name" pour la compatibilité
-                        "username": row[2],
-                        "user_id": row[3],
-                        "created_at": row[4]
-                    }
-            else:
-                # Version sans created_at - même logique
-                cursor.execute(
-                    "SELECT id, title, username, user_id FROM channels WHERE username = ? AND user_id = ?",
-                    (username, user_id)
-                )
-                row = cursor.fetchone()
-                
-                if not row:
+                    if has_created_at:
+                        return {"id": row[0], "name": row[1], "username": row[2], "user_id": row[3], "created_at": row[4]}
+                    else:
+                        return {"id": row[0], "name": row[1], "username": row[2], "user_id": row[3]}
+
+            # Fallback: schéma type channel_repo (title + membership table)
+            # channels(id,tg_chat_id,title,username,bot_is_admin,created_at) + channel_members(channel_id,user_id)
+            if has_title:
+                select_cols = "c.id, c.title, c.username, cm.user_id" + (", c.created_at" if has_created_at else "")
+                for uname in (username, clean_username, with_at):
                     cursor.execute(
-                        "SELECT id, title, username, user_id FROM channels WHERE username = ? AND user_id = ?",
-                        (clean_username, user_id)
+                        f"""
+                        SELECT {select_cols}
+                        FROM channels c
+                        JOIN channel_members cm ON cm.channel_id = c.id
+                        WHERE c.username = ? AND cm.user_id = ?
+                        """,
+                        (uname, user_id),
                     )
                     row = cursor.fetchone()
-                
-                if not row:
-                    cursor.execute(
-                        "SELECT id, title, username, user_id FROM channels WHERE username = ? AND user_id = ?",
-                        (with_at, user_id)
-                    )
-                    row = cursor.fetchone()
-                
+                    if row:
+                        break
                 if row:
-                    return {
-                        "id": row[0],
-                        "name": row[1],  # title dans la DB, mais on garde "name" pour la compatibilité
-                        "username": row[2],
-                        "user_id": row[3]
-                    }
+                    if has_created_at:
+                        return {"id": row[0], "name": row[1], "username": row[2], "user_id": row[3], "created_at": row[4]}
+                    else:
+                        return {"id": row[0], "name": row[1], "username": row[2], "user_id": row[3]}
             return None
         except sqlite3.Error as e:
             logger.error(f"Error retrieving channel by username: {e}")
