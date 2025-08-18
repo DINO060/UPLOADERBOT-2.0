@@ -321,7 +321,7 @@ async def send_scheduled_file(post: Dict[str, Any], app: Optional[Application] =
                     for reaction in reactions:
                         current_row.append(InlineKeyboardButton(
                             reaction,
-                            callback_data=f"reaction_{post_id}_{reaction}"
+                            callback_data=f"react_{post_id}_{reaction}"
                         ))
                         # 4 réactions par ligne maximum
                         if len(current_row) == 4:

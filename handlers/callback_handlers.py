@@ -3376,10 +3376,10 @@ async def handle_send_normal_posts(update: Update, context: ContextTypes.DEFAULT
                     if reactions:
                         current_row = []
                         for reaction in reactions:
-                            logger.info(f"⭐ Ajout réaction: {reaction}")
+                            logger.info(f" Ajout réaction: {reaction}")
                             current_row.append(InlineKeyboardButton(
                                 reaction,
-                                callback_data=f"reaction_{post_index}_{reaction}"
+                                callback_data=f"react_{post_index}_{reaction}"
                             ))
                             # 4 réactions par ligne maximum
                             if len(current_row) == 4:
