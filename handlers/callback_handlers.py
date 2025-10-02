@@ -58,8 +58,11 @@ def _get_db_path() -> str:
             return settings.db_path
     except Exception:
         pass
-    # Fallback
-    return 'bot.db'
+    # Fallback uniforme - toujours data/bot.db
+    from pathlib import Path
+    data_dir = Path(__file__).resolve().parent.parent / "data"
+    data_dir.mkdir(parents=True, exist_ok=True)
+    return str(data_dir / "bot.db")
 
 def _ensure_reactions_schema(conn: sqlite3.Connection) -> None:
     """Create tables for reactions if they do not exist."""

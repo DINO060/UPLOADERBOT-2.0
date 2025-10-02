@@ -414,55 +414,40 @@ class DatabaseManager:
             raise DatabaseError(f"Error listing channels: {e}")
 
     def delete_channel(self, channel_id: int, user_id: int) -> bool:
-        """Deletes a channel and all its associated publications"""
+        """
+        Deletes a channel and all its associated publications
+        VERSION CORRIGÉE avec FK CASCADE - Simple et efficace
+        """
         try:
             cursor = self.connection.cursor()
-            # Detect channel_members table
-            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='channel_members'")
-            has_members = cursor.fetchone() is not None
-            # Detect presence of channels.user_id
-            cursor.execute("PRAGMA table_info(channels)")
-            _cols = [c[1] for c in cursor.fetchall()]
-            has_user_id = 'user_id' in _cols
+            
+            # CRITIQUE: Activer les Foreign Keys à chaque connexion
+            cursor.execute("PRAGMA foreign_keys = ON;")
 
-            # Verify ownership
-            if has_members and has_user_id:
-                cursor.execute(
-                    """
-                    SELECT 1
-                    FROM channels c
-                    LEFT JOIN channel_members cm ON cm.channel_id = c.id
-                    WHERE c.id = ? AND COALESCE(c.user_id, cm.user_id) = ?
-                    LIMIT 1
-                    """,
-                    (channel_id, user_id)
-                )
-            elif has_members and not has_user_id:
-                cursor.execute(
-                    """
-                    SELECT 1
-                    FROM channels c
-                    JOIN channel_members cm ON cm.channel_id = c.id
-                    WHERE c.id = ? AND cm.user_id = ?
-                    LIMIT 1
-                    """,
-                    (channel_id, user_id)
-                )
-            else:
-                cursor.execute("SELECT 1 FROM channels WHERE id = ? AND user_id = ?", (channel_id, user_id))
+            # Vérifier que l'utilisateur a le droit (propriétaire du canal)
+            cursor.execute("SELECT 1 FROM channels WHERE id = ? AND user_id = ? LIMIT 1", 
+                          (channel_id, user_id))
             if not cursor.fetchone():
+                logger.warning(f"User {user_id} tried to delete channel {channel_id} without permission")
                 return False
 
-            # Delete posts
-            cursor.execute("DELETE FROM posts WHERE channel_id = ?", (channel_id,))
-
-            # Delete channel (no user_id constraint for legacy safety)
+            # Suppression simple: les FK CASCADE s'occupent du reste
+            # DELETE posts, jobs, etc. automatiquement grâce au ON DELETE CASCADE
             cursor.execute("DELETE FROM channels WHERE id = ?", (channel_id,))
-
+            
+            deleted_count = cursor.rowcount
             self.connection.commit()
-            return cursor.rowcount > 0
+            
+            if deleted_count == 1:
+                logger.info(f"✅ Channel {channel_id} deleted successfully by user {user_id} (CASCADE applied)")
+                return True
+            else:
+                logger.warning(f"⚠️ Channel {channel_id} not found or already deleted")
+                return False
+                
         except sqlite3.Error as e:
-            logger.error(f"Error deleting channel: {e}")
+            logger.error(f"Error deleting channel {channel_id}: {e}")
+            self.connection.rollback()
             return False
 
     def get_channel_by_username(self, username: str, user_id: int) -> Optional[Dict[str, Any]]:
