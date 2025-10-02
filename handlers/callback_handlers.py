@@ -3079,10 +3079,21 @@ async def send_post_now(update, context, scheduled_post=None):
             # ✅ VALIDATION DU CANAL - Vérifier qu'un canal valide est sélectionné
             selected_channel = context.user_data.get('selected_channel', {})
             channel = selected_channel.get('username') or selected_channel.get('channel_id')
+            
+            # DEBUG - Afficher les informations du canal
+            logger.info(f"🔍 DEBUG CANAL - selected_channel: {selected_channel}")
+            logger.info(f"🔍 DEBUG CANAL - channel extrait: {channel}")
+            logger.info(f"🔍 DEBUG CANAL - posts[0] channel: {posts[0].get('channel') if posts else 'N/A'}")
         
         # Pour les posts planifiés, on utilise le channel_id du post
         if scheduled_post:
             channel = channel_id  # Utiliser l'ID du canal du post planifié
+            logger.info(f"🔍 DEBUG CANAL - Mode planifié, channel: {channel}")
+        
+        # Si pas de canal dans selected_channel, essayer de le récupérer depuis le post
+        if not channel and posts:
+            channel = posts[0].get("channel")
+            logger.info(f"🔍 DEBUG CANAL - Récupéré depuis posts[0]: {channel}")
         
         if not channel or channel == '@default_channel':
             logger.warning(f"⚠️ No valid channel selected for posts. Selected: {selected_channel}")
