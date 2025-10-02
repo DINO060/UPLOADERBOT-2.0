@@ -19,13 +19,13 @@ Module centralisant tous les états de conversation utilisés dans le bot Telegr
     WAITING_CHANNEL_SELECTION,
     WAITING_PUBLICATION_CONTENT,
     WAITING_TIMEZONE,
-    WAITING_THUMBNAIL,
     WAITING_REACTION_INPUT,
     WAITING_URL_INPUT,
     WAITING_RENAME_INPUT,
     WAITING_THUMBNAIL_RENAME_INPUT,
+
     WAITING_SCHEDULE_TIME,
     WAITING_EDIT_TIME,
     WAITING_CUSTOM_USERNAME,
     WAITING_TAG_INPUT
-) = range(24)  # 24 états au total 
+) = range(23)  # 23 états au total 

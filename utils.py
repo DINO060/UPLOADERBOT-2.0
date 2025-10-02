@@ -159,16 +159,16 @@ class KeyboardManager:
     def get_time_selection_keyboard() -> InlineKeyboardMarkup:
         return InlineKeyboardMarkup([
             [
-                InlineKeyboardButton("Aujourd'hui", callback_data="schedule_today"),
-                InlineKeyboardButton("Demain", callback_data="schedule_tomorrow"),
+                InlineKeyboardButton("Today", callback_data="schedule_today"),
+                InlineKeyboardButton("Tomorrow", callback_data="schedule_tomorrow"),
             ],
-            [InlineKeyboardButton("↩️ Retour", callback_data="retour")]
+            [InlineKeyboardButton("↩️ Back", callback_data="retour")]
         ])
 
     @staticmethod
     def get_error_keyboard() -> InlineKeyboardMarkup:
         return InlineKeyboardMarkup([[
-            InlineKeyboardButton("↩️ Menu principal", callback_data="main_menu")
+            InlineKeyboardButton("↩️ Main Menu", callback_data="main_menu")
         ]])
 
 

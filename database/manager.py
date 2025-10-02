@@ -1,4 +1,4 @@
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Generator
 import sqlite3
 import logging
 from datetime import datetime
@@ -6,8 +6,25 @@ from pathlib import Path
 from config import settings
 import os
 import json
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker, scoped_session
+from sqlalchemy.ext.declarative import declarative_base
 
 logger = logging.getLogger(__name__)
+
+# SQLAlchemy setup
+DATABASE_URL = f"sqlite:///{settings.db_config['path'].replace('\\', '/')}"
+engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": settings.db_config["check_same_thread"]})
+SessionLocal = scoped_session(sessionmaker(autocommit=False, autoflush=False, bind=engine))
+Base = declarative_base()
+
+# Dependency to get DB session
+def get_db_session() -> Generator:
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
 
 
 class DatabaseError(Exception):
@@ -44,6 +61,15 @@ class DatabaseManager:
                 timeout=settings.db_config["timeout"],
                 check_same_thread=settings.db_config["check_same_thread"]
             )
+            # Apply PRAGMAs to improve reliability/performance
+            try:
+                self.connection.execute("PRAGMA journal_mode=WAL")
+                self.connection.execute("PRAGMA synchronous=NORMAL")
+                self.connection.execute("PRAGMA foreign_keys=ON")
+                self.connection.execute("PRAGMA busy_timeout=10000")
+                self.connection.execute("PRAGMA cache_size=10000")
+            except Exception:
+                pass
             cursor = self.connection.cursor()
 
             # Table des canaux (même structure que mon_bot_telegram LAS COMPLET)
@@ -120,25 +146,65 @@ class DatabaseManager:
                 pass
 
             # Table des fuseaux horaires des utilisateurs
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS user_timezones (
-                    user_id INTEGER PRIMARY KEY,
-                    timezone TEXT NOT NULL,
-                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            ''')
+            try:
+                cursor.execute("PRAGMA table_info(user_timezones)")
+                columns = [column[1] for column in cursor.fetchall()]
+                
+                # Créer la table si elle n'existe pas
+                if not columns:
+                    cursor.execute('''
+                        CREATE TABLE user_timezones (
+                            user_id INTEGER PRIMARY KEY,
+                            timezone TEXT NOT NULL,
+                            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                        )
+                    ''')
+                    logger.info("✅ Table 'user_timezones' créée avec succès")
+                else:
+                    # Vérifier et ajouter les colonnes manquantes
+                    if 'updated_at' not in columns:
+                        logger.info("Ajout de la colonne 'updated_at' à la table 'user_timezones'")
+                        cursor.execute('''
+                            ALTER TABLE user_timezones 
+                            ADD COLUMN updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                        ''')
+                        logger.info("✅ Colonne 'updated_at' ajoutée avec succès")
+                        
+            except sqlite3.Error as e:
+                logger.error(f"Erreur lors de la gestion de la table 'user_timezones': {e}")
+                raise
 
-            # Ajout de la table channel_thumbnails
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS channel_thumbnails (
-                    channel_username TEXT NOT NULL,
-                    user_id INTEGER NOT NULL,
-                    thumbnail_file_id TEXT NOT NULL,
-                    local_path TEXT,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    PRIMARY KEY (channel_username, user_id)
-                )
-            ''')
+            # Gestion de la table channel_thumbnails
+            try:
+                cursor.execute("PRAGMA table_info(channel_thumbnails)")
+                columns = [column[1] for column in cursor.fetchall()]
+                
+                # Créer la table si elle n'existe pas
+                if not columns:
+                    cursor.execute('''
+                        CREATE TABLE channel_thumbnails (
+                            channel_username TEXT NOT NULL,
+                            user_id INTEGER NOT NULL,
+                            thumbnail_file_id TEXT NOT NULL,
+                            local_path TEXT,
+                            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                            PRIMARY KEY (channel_username, user_id)
+                        )
+                    ''')
+                    logger.info("✅ Table 'channel_thumbnails' créée avec succès")
+                else:
+                    # Vérifier et ajouter les colonnes manquantes
+                    if 'local_path' not in columns:
+                        logger.info("Ajout de la colonne 'local_path' à la table 'channel_thumbnails'")
+                        cursor.execute('''
+                            ALTER TABLE channel_thumbnails 
+                            ADD COLUMN local_path TEXT
+                        ''')
+                        logger.info("✅ Colonne 'local_path' ajoutée avec succès")
+                        
+            except sqlite3.Error as e:
+                logger.error(f"Erreur lors de la gestion de la table 'channel_thumbnails': {e}")
+                raise
 
             # Table pour quotas/journalier et cooldown d'envoi
             cursor.execute('''
@@ -209,24 +275,38 @@ class DatabaseManager:
             has_created = 'created_at' in cols
             has_user_id = 'user_id' in cols
             has_title = 'title' in cols
+            has_name = 'name' in cols
 
+            cursor.execute("PRAGMA table_info(channels)")
+            columns = [col[1] for col in cursor.fetchall()]
+            has_user_id = 'user_id' in columns
             cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='channel_members'")
             has_members = cursor.fetchone() is not None
 
             select_created = ", c.created_at" if has_created else ""
+            # Build a safe channel name expression without referencing missing columns
+            if has_name and has_title:
+                name_expr = "COALESCE(c.name, c.title)"
+            elif has_name:
+                name_expr = "c.name"
+            elif has_title:
+                name_expr = "c.title"
+            else:
+                name_expr = "c.username"
+
             if has_user_id:
                 cursor.execute(
                     f"""
-                    SELECT c.id, COALESCE(c.name, c.title) AS name, c.username, c.user_id{select_created}
+                    SELECT c.id, {name_expr} AS name, c.username, c.user_id{select_created}
                     FROM channels c
                     WHERE c.id = ?
                     """,
                     (channel_id,)
                 )
-            elif has_members and has_title:
+            elif has_members:
                 cursor.execute(
                     f"""
-                    SELECT c.id, c.title AS name, c.username, cm.user_id{select_created}
+                    SELECT c.id, {name_expr} AS name, c.username, cm.user_id{select_created}
                     FROM channels c
                     LEFT JOIN channel_members cm ON cm.channel_id = c.id
                     WHERE c.id = ?
@@ -237,7 +317,11 @@ class DatabaseManager:
             else:
                 # Minimal fallback
                 cursor.execute(
-                    "SELECT id, COALESCE(name, title) AS name, username FROM channels WHERE id = ?",
+                    f"""
+                    SELECT c.id, {name_expr} AS name, c.username
+                    FROM channels c
+                    WHERE c.id = ?
+                    """,
                     (channel_id,)
                 )
             row = cursor.fetchone()
@@ -262,14 +346,30 @@ class DatabaseManager:
             cursor.execute("PRAGMA table_info(channels)")
             columns = [col[1] for col in cursor.fetchall()]
             has_created = 'created_at' in columns
+            has_user_id = 'user_id' in columns
             cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='channel_members'")
             has_members = cursor.fetchone() is not None
 
             select_created = ", c.created_at" if has_created else ""
-            if has_members:
+            # Build a safe channel name expression without referencing missing columns
+            name_expr = None
+            cursor.execute("PRAGMA table_info(channels)")
+            _cols = [col[1] for col in cursor.fetchall()]
+            _has_name = 'name' in _cols
+            _has_title = 'title' in _cols
+            if _has_name and _has_title:
+                name_expr = "COALESCE(c.name, c.title) AS name"
+            elif _has_name:
+                name_expr = "c.name AS name"
+            elif _has_title:
+                name_expr = "c.title AS name"
+            else:
+                name_expr = "c.username AS name"
+
+            if has_members and has_user_id:
                 cursor.execute(
                     f"""
-                    SELECT c.id, COALESCE(c.name, c.title) AS name, c.username,
+                    SELECT c.id, {name_expr}, c.username,
                            COALESCE(c.user_id, cm.user_id) AS user_id{select_created}
                     FROM channels c
                     LEFT JOIN channel_members cm ON cm.channel_id = c.id
@@ -278,10 +378,22 @@ class DatabaseManager:
                     """,
                     (user_id,)
                 )
+            elif has_members and not has_user_id:
+                cursor.execute(
+                    f"""
+                    SELECT c.id, {name_expr}, c.username,
+                           cm.user_id AS user_id{select_created}
+                    FROM channels c
+                    LEFT JOIN channel_members cm ON cm.channel_id = c.id
+                    WHERE cm.user_id = ?
+                    ORDER BY name
+                    """,
+                    (user_id,)
+                )
             else:
                 cursor.execute(
                     f"""
-                    SELECT c.id, COALESCE(c.name, c.title) AS name, c.username,
+                    SELECT c.id, {name_expr}, c.username,
                            c.user_id{select_created}
                     FROM channels c
                     WHERE c.user_id = ?
@@ -308,15 +420,30 @@ class DatabaseManager:
             # Detect channel_members table
             cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='channel_members'")
             has_members = cursor.fetchone() is not None
+            # Detect presence of channels.user_id
+            cursor.execute("PRAGMA table_info(channels)")
+            _cols = [c[1] for c in cursor.fetchall()]
+            has_user_id = 'user_id' in _cols
 
             # Verify ownership
-            if has_members:
+            if has_members and has_user_id:
                 cursor.execute(
                     """
                     SELECT 1
                     FROM channels c
                     LEFT JOIN channel_members cm ON cm.channel_id = c.id
                     WHERE c.id = ? AND COALESCE(c.user_id, cm.user_id) = ?
+                    LIMIT 1
+                    """,
+                    (channel_id, user_id)
+                )
+            elif has_members and not has_user_id:
+                cursor.execute(
+                    """
+                    SELECT 1
+                    FROM channels c
+                    JOIN channel_members cm ON cm.channel_id = c.id
+                    WHERE c.id = ? AND cm.user_id = ?
                     LIMIT 1
                     """,
                     (channel_id, user_id)
@@ -726,20 +853,42 @@ class DatabaseManager:
         """Définit le fuseau horaire d'un utilisateur"""
         try:
             cursor = self.connection.cursor()
-            cursor.execute(
-                """
-                INSERT INTO user_timezones (user_id, timezone)
-                VALUES (?, ?)
-                ON CONFLICT(user_id) DO UPDATE SET
-                timezone = excluded.timezone,
-                updated_at = CURRENT_TIMESTAMP
-                """,
-                (user_id, timezone)
-            )
+            
+            # Vérifier si la colonne updated_at existe
+            cursor.execute("PRAGMA table_info(user_timezones)")
+            columns = [column[1] for column in cursor.fetchall()]
+            has_updated_at = 'updated_at' in columns
+            
+            # Construire la requête en fonction des colonnes disponibles
+            if has_updated_at:
+                query = """
+                    INSERT INTO user_timezones (user_id, timezone, updated_at)
+                    VALUES (?, ?, CURRENT_TIMESTAMP)
+                    ON CONFLICT(user_id) DO UPDATE SET
+                    timezone = excluded.timezone,
+                    updated_at = CURRENT_TIMESTAMP
+                    """
+            else:
+                query = """
+                    INSERT INTO user_timezones (user_id, timezone)
+                    VALUES (?, ?)
+                    ON CONFLICT(user_id) DO UPDATE SET
+                    timezone = excluded.timezone
+                    """
+            
+            cursor.execute(query, (user_id, timezone))
             self.connection.commit()
             return True
+            
         except sqlite3.Error as e:
             logger.error(f"Erreur lors de la mise à jour du fuseau horaire: {e}")
+            # Si la table n'existe pas, la créer
+            if "no such table" in str(e).lower():
+                try:
+                    self.setup_database()  # Recréer la table si elle n'existe pas
+                    return self.set_user_timezone(user_id, timezone)  # Réessayer
+                except Exception as inner_e:
+                    logger.error(f"Échec de la recréation de la table: {inner_e}")
             raise DatabaseError(f"Erreur lors de la mise à jour du fuseau horaire: {e}")
 
     def get_user_timezone(self, user_id: int) -> Optional[str]:
@@ -771,9 +920,12 @@ class DatabaseManager:
         """Récupère les publications planifiées d'un utilisateur"""
         try:
             cursor = self.connection.cursor()
+            cursor.execute("PRAGMA table_info(channels)")
+            columns = [col[1] for col in cursor.fetchall()]
+            has_user_id = 'user_id' in columns
             cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='channel_members'")
             has_members = cursor.fetchone() is not None
-            if has_members:
+            if has_members and has_user_id:
                 cursor.execute(
                     """
                     SELECT p.*, c.username
@@ -783,6 +935,20 @@ class DatabaseManager:
                     WHERE p.status = 'pending'
                       AND p.scheduled_time IS NOT NULL
                       AND COALESCE(c.user_id, cm.user_id) = ?
+                    ORDER BY p.scheduled_time
+                    """,
+                    (user_id,)
+                )
+            elif has_members and not has_user_id:
+                cursor.execute(
+                    """
+                    SELECT p.*, c.username
+                    FROM posts p
+                    JOIN channels c ON p.channel_id = c.id
+                    JOIN channel_members cm ON cm.channel_id = c.id
+                    WHERE p.status = 'pending'
+                      AND p.scheduled_time IS NOT NULL
+                      AND cm.user_id = ?
                     ORDER BY p.scheduled_time
                     """,
                     (user_id,)
@@ -824,32 +990,91 @@ class DatabaseManager:
         """Sauvegarde un thumbnail pour un canal avec file_id ET fichier local optionnel"""
         try:
             cursor = self.connection.cursor()
-            cursor.execute(
-                "INSERT OR REPLACE INTO channel_thumbnails (channel_username, user_id, thumbnail_file_id, local_path) VALUES (?, ?, ?, ?)",
-                (channel_username, user_id, thumbnail_file_id, local_path)
-            )
+            
+            # Vérifier si la colonne local_path existe
+            cursor.execute("PRAGMA table_info(channel_thumbnails)")
+            columns = [column[1] for column in cursor.fetchall()]
+            has_local_path = 'local_path' in columns
+            
+            if has_local_path:
+                cursor.execute(
+                    """
+                    INSERT OR REPLACE INTO channel_thumbnails 
+                    (channel_username, user_id, thumbnail_file_id, local_path) 
+                    VALUES (?, ?, ?, ?)
+                    """,
+                    (channel_username, user_id, thumbnail_file_id, local_path)
+                )
+            else:
+                # Si la colonne n'existe pas, on ne sauvegarde que les champs obligatoires
+                cursor.execute(
+                    """
+                    INSERT OR REPLACE INTO channel_thumbnails 
+                    (channel_username, user_id, thumbnail_file_id) 
+                    VALUES (?, ?, ?)
+                    """,
+                    (channel_username, user_id, thumbnail_file_id)
+                )
+                
             self.connection.commit()
             logger.info(f"✅ Thumbnail sauvé pour @{channel_username}: file_id={thumbnail_file_id[:30]}..., local_path={local_path}")
             return True
+            
         except sqlite3.Error as e:
             logger.error(f"Erreur lors de la sauvegarde du thumbnail: {e}")
+            # Si la table n'existe pas, la recréer
+            if "no such table" in str(e).lower():
+                try:
+                    self.setup_database()
+                    return self.save_thumbnail(channel_username, user_id, thumbnail_file_id, local_path)
+                except Exception as inner_e:
+                    logger.error(f"Échec de la recréation de la table: {inner_e}")
             return False
 
     def get_thumbnail(self, channel_username: str, user_id: int) -> Optional[Dict[str, str]]:
         """Récupère le file_id ET le chemin local du thumbnail d'un canal"""
         try:
             cursor = self.connection.cursor()
-            cursor.execute(
-                "SELECT thumbnail_file_id, local_path FROM channel_thumbnails WHERE channel_username = ? AND user_id = ?",
-                (channel_username, user_id)
-            )
-            result = cursor.fetchone()
-            if result:
-                return {
-                    "file_id": result[0],
-                    "local_path": result[1]
-                }
+            
+            # Vérifier si la colonne local_path existe
+            cursor.execute("PRAGMA table_info(channel_thumbnails)")
+            columns = [column[1] for column in cursor.fetchall()]
+            has_local_path = 'local_path' in columns
+            
+            if has_local_path:
+                cursor.execute(
+                    """
+                    SELECT thumbnail_file_id, local_path 
+                    FROM channel_thumbnails 
+                    WHERE channel_username = ? AND user_id = ?
+                    """,
+                    (channel_username, user_id)
+                )
+                result = cursor.fetchone()
+                if result:
+                    return {
+                        "file_id": result[0],
+                        "local_path": result[1] if len(result) > 1 else None
+                    }
+            else:
+                # Si la colonne n'existe pas, on ne récupère que le file_id
+                cursor.execute(
+                    """
+                    SELECT thumbnail_file_id 
+                    FROM channel_thumbnails 
+                    WHERE channel_username = ? AND user_id = ?
+                    """,
+                    (channel_username, user_id)
+                )
+                result = cursor.fetchone()
+                if result:
+                    return {
+                        "file_id": result[0],
+                        "local_path": None
+                    }
+            
             return None
+            
         except sqlite3.Error as e:
             logger.error(f"Erreur lors de la récupération du thumbnail: {e}")
             return None

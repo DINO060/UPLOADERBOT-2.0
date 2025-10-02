@@ -30,7 +30,16 @@ CREATE TABLE IF NOT EXISTS channel_members (
 
 
 def db():
-    return sqlite3.connect(DB_PATH, isolation_level=None)
+    cx = sqlite3.connect(DB_PATH, timeout=30, isolation_level=None, check_same_thread=False)
+    try:
+        cx.execute("PRAGMA journal_mode=WAL")
+        cx.execute("PRAGMA synchronous=NORMAL")
+        cx.execute("PRAGMA busy_timeout=10000")
+        cx.execute("PRAGMA foreign_keys=ON")
+        cx.execute("PRAGMA cache_size=10000")
+    except Exception:
+        pass
+    return cx
 
 
 def init_db():
@@ -83,16 +92,42 @@ def add_member_if_missing(channel_id: int, user_id: int):
 
 def list_user_channels(user_id: int) -> Iterable[Dict[str, Any]]:
     with db() as cx:
-        rows = cx.execute(
-            """
-      SELECT c.id,c.name,c.username,c.user_id,c.created_at
-      FROM channels c
-      WHERE c.user_id = ?
-    """,
-            (user_id,),
-        ).fetchall()
-        cols = ["id", "name", "username", "user_id", "created_at"]
-        return [dict(zip(cols, r)) for r in rows]
+        # Detect schema
+        cols = [r[1] for r in cx.execute("PRAGMA table_info(channels)").fetchall()]
+        has_name = 'name' in cols
+        has_title = 'title' in cols
+        has_user_id = 'user_id' in cols
+        has_created_at = 'created_at' in cols
+
+        if has_user_id and has_name:
+            select_cols = "c.id, c.name, c.username, c.user_id" + (", c.created_at" if has_created_at else "")
+            rows = cx.execute(
+                f"""
+                SELECT {select_cols}
+                FROM channels c
+                WHERE c.user_id = ?
+                """,
+                (user_id,),
+            ).fetchall()
+            map_cols = ["id", "name", "username", "user_id"] + (["created_at"] if has_created_at else [])
+            return [dict(zip(map_cols, r)) for r in rows]
+
+        # Fallback: legacy schema using title + channel_members
+        if has_title:
+            select_cols = "c.id, c.title AS name, c.username, cm.user_id" + (", c.created_at" if has_created_at else "")
+            rows = cx.execute(
+                f"""
+                SELECT {select_cols}
+                FROM channels c
+                JOIN channel_members cm ON cm.channel_id = c.id
+                WHERE cm.user_id = ?
+                """,
+                (user_id,),
+            ).fetchall()
+            map_cols = ["id", "name", "username", "user_id"] + (["created_at"] if has_created_at else [])
+            return [dict(zip(map_cols, r)) for r in rows]
+
+        return []
 
 
 def get_channel_by_username(username: str, user_id: int) -> Optional[Dict[str, Any]]:
@@ -101,60 +136,132 @@ def get_channel_by_username(username: str, user_id: int) -> Optional[Dict[str, A
         # Nettoyer le username
         clean_username = username.lstrip('@')
         with_at = f"@{clean_username}" if not username.startswith('@') else username
-        
-        # Essayer d'abord avec le format exact
-        r = cx.execute(
-            """
-            SELECT c.id, c.name, c.username, c.user_id, c.created_at
-            FROM channels c
-            WHERE c.username = ? AND c.user_id = ?
-            """,
-            (username, user_id)
-        ).fetchone()
-        
-        # Si pas trouvé, essayer sans @
-        if not r:
-            r = cx.execute(
-                """
-                SELECT c.id, c.name, c.username, c.user_id, c.created_at
-                FROM channels c
-                WHERE c.username = ? AND c.user_id = ?
-                """,
-                (clean_username, user_id)
-            ).fetchone()
-        
-        # Si pas trouvé, essayer avec @
-        if not r:
-            r = cx.execute(
-                """
-                SELECT c.id, c.name, c.username, c.user_id, c.created_at
-                FROM channels c
-                WHERE c.username = ? AND c.user_id = ?
-                """,
-                (with_at, user_id)
-            ).fetchone()
-        
-        if r:
-            cols = ["id", "name", "username", "user_id", "created_at"]
-            result = dict(zip(cols, r))
-            return result
-        
+
+        # Detect schema
+        cols = [r[1] for r in cx.execute("PRAGMA table_info(channels)").fetchall()]
+        has_name = 'name' in cols
+        has_title = 'title' in cols
+        has_user_id = 'user_id' in cols
+        has_created_at = 'created_at' in cols
+
+        # Preferred schema path: channels has (name, user_id)
+        if has_name and has_user_id:
+            select_cols = "c.id, c.name, c.username, c.user_id" + (", c.created_at" if has_created_at else "")
+            for uname in (username, clean_username, with_at):
+                r = cx.execute(
+                    f"""
+                    SELECT {select_cols}
+                    FROM channels c
+                    WHERE c.username = ? AND c.user_id = ?
+                    """,
+                    (uname, user_id),
+                ).fetchone()
+                if r:
+                    map_cols = ["id", "name", "username", "user_id"] + (["created_at"] if has_created_at else [])
+                    return dict(zip(map_cols, r))
+
+        # Fallback: legacy schema: title + channel_members
+        if has_title:
+            select_cols = "c.id, c.title AS name, c.username, cm.user_id" + (", c.created_at" if has_created_at else "")
+            for uname in (username, clean_username, with_at):
+                r = cx.execute(
+                    f"""
+                    SELECT {select_cols}
+                    FROM channels c
+                    JOIN channel_members cm ON cm.channel_id = c.id
+                    WHERE c.username = ? AND cm.user_id = ?
+                    """,
+                    (uname, user_id),
+                ).fetchone()
+                if r:
+                    map_cols = ["id", "name", "username", "user_id"] + (["created_at"] if has_created_at else [])
+                    return dict(zip(map_cols, r))
+
         return None
 
 
 def add_channel(name: str, username: str, user_id: int) -> int:
-    """Add a new channel for a user"""
+    """Add a new channel for a user - Compatible avec nouveau schéma"""
     with db() as cx:
-        # Insérer le canal avec la structure simple
-        cursor = cx.execute(
-            """
-            INSERT INTO channels (name, username, user_id)
-            VALUES (?, ?, ?)
-            """,
-            (name, username, user_id)
-        )
-        channel_id = cursor.lastrowid
+        # Detect schema
+        cols = [r[1] for r in cx.execute("PRAGMA table_info(channels)").fetchall()]
+        has_name = 'name' in cols
+        has_title = 'title' in cols
+        has_user_id = 'user_id' in cols
+        has_tg_chat_id = 'tg_chat_id' in cols
         
-        return channel_id
+        print(f"DEBUG add_channel: cols={cols}")
+        print(f"DEBUG add_channel: has_tg_chat_id={has_tg_chat_id}, has_title={has_title}, has_name={has_name}, has_user_id={has_user_id}")
+
+        # Nouveau schéma avec tg_chat_id
+        if has_tg_chat_id and has_title:
+            # Pour la compatibilité, on ne peut pas vraiment ajouter un canal sans tg_chat_id
+            # Cette fonction est obsolète mais on l'adapte pour éviter les erreurs
+            print(f"WARN: add_channel appelée avec ancien format. name={name}, username={username}")
+            
+            # Canal nouveau - générer un tg_chat_id unique factice
+            import time
+            import random
+            fake_chat_id = -(int(time.time()) * 1000 + random.randint(1000, 9999))
+            
+            try:
+                cursor = cx.execute(
+                    """
+                    INSERT INTO channels (tg_chat_id, title, username, bot_is_admin)
+                    VALUES (?, ?, ?, 0)
+                    """,
+                    (fake_chat_id, name, username),
+                )
+                channel_id = cursor.lastrowid
+                print(f"Canal ajouté avec ID={channel_id}")
+                
+                # Ajouter l'utilisateur comme membre
+                cx.execute(
+                    """
+                    INSERT OR IGNORE INTO channel_members (channel_id, user_id)
+                    VALUES (?, ?)
+                    """,
+                    (channel_id, user_id),
+                )
+                print(f"Utilisateur {user_id} ajouté comme membre")
+                
+                return channel_id
+                
+            except Exception as e:
+                print(f"Erreur ajout canal: {e}")
+                raise
+
+        # Ancien schéma (fallback)
+        elif has_name and has_user_id:
+            cursor = cx.execute(
+                """
+                INSERT INTO channels (name, username, user_id)
+                VALUES (?, ?, ?)
+                """,
+                (name, username, user_id),
+            )
+            return cursor.lastrowid
+
+        # Legacy: insert channel and membership separately
+        if has_title:
+            cursor = cx.execute(
+                """
+                INSERT INTO channels (title, username)
+                VALUES (?, ?)
+                """,
+                (name, username),
+            )
+            channel_id = cursor.lastrowid
+            cx.execute(
+                """
+                INSERT OR IGNORE INTO channel_members (channel_id, user_id)
+                VALUES (?, ?)
+                """,
+                (channel_id, user_id),
+            )
+            return channel_id
+
+        # If schema unknown, raise
+        raise sqlite3.OperationalError("Unsupported channels schema")
 
 

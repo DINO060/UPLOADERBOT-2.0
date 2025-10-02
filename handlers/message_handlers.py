@@ -11,6 +11,7 @@ from database.manager import DatabaseManager
 from database.channel_repo import get_channel_by_username as repo_get_channel_by_username, add_channel as repo_add_channel
 from utils.message_utils import PostType, MessageError
 from utils.validators import InputValidator
+from utils.channel_manager import handle_add_channel_message
 from conversation_states import MAIN_MENU, WAITING_PUBLICATION_CONTENT, WAITING_TAG_INPUT, SETTINGS
 import pytz
 
@@ -272,14 +273,14 @@ async def handle_timezone_input(update: Update, context: ContextTypes.DEFAULT_TY
             await update.message.reply_text(
                 f"✅ Timezone set: {user_input}",
                 reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("↩️ Retour aux paramètres", callback_data="settings")]
+                    [InlineKeyboardButton("↩️ Back to Settings", callback_data="settings")]
                 ])
             )
         else:
             await update.message.reply_text(
                 "❌ Error saving timezone.",
                 reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("↩️ Retour aux paramètres", callback_data="settings")]
+                    [InlineKeyboardButton("↩️ Back to Settings", callback_data="settings")]
                 ])
             )
         
@@ -290,7 +291,7 @@ async def handle_timezone_input(update: Update, context: ContextTypes.DEFAULT_TY
         await update.message.reply_text(
             "❌ An error occurred while configuring the timezone.",
             reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("↩️ Retour aux paramètres", callback_data="settings")]
+                [InlineKeyboardButton("↩️ Back to Settings", callback_data="settings")]
             ])
         )
         return SETTINGS
@@ -314,120 +315,12 @@ async def handle_channel_info(update: Update, context: ContextTypes.DEFAULT_TYPE
         
         # Vérifier si on attend une entrée de canal suite à add_channel_prompt
         if context.user_data.get('waiting_for_channel_info'):
-            # Traitement de l'ajout de canal
+            # Traitement de l'ajout de canal avec vérification des permissions
             context.user_data.pop('waiting_for_channel_info', None)
             
-            # Validation du format - accepter "Nom @username" ou juste "@username" ou lien t.me
-            channel_username = None
-            display_name = None
-            
-            if user_input.startswith('https://t.me/'):
-                # Format: https://t.me/username
-                channel_username = user_input.replace('https://t.me/', '')
-                display_name = channel_username  # Utiliser le username comme nom par défaut
-            elif user_input.startswith('@'):
-                # Format: @username
-                channel_username = user_input.lstrip('@')
-                display_name = channel_username  # Utiliser le username comme nom par défaut
-            elif '@' in user_input:
-                # Format: "Nom du canal @username"
-                parts = user_input.rsplit('@', 1)  # Diviser sur le dernier @
-                if len(parts) == 2:
-                    display_name = parts[0].strip()
-                    channel_username = parts[1].strip()
-                    # Vérifier que le username n'est pas vide
-                    if not channel_username:
-                        channel_username = None
-            
-            # Validation finale
-            if not channel_username:
-                await update.message.reply_text(
-                    "❌ Invalid format. Use one of these formats:\n"
-                    "• `Nom du canal @username`\n"
-                    "• `@username`\n"
-                    "• `https://t.me/username`\n\n"
-                    "Exemple : `Mon Canal @monchannel`",
-                    parse_mode='Markdown',
-                    reply_markup=InlineKeyboardMarkup([
-                        [InlineKeyboardButton("🔄 Réessayer", callback_data="add_channel")],
-                        [InlineKeyboardButton("↩️ Retour", callback_data="manage_channels")]
-                    ])
-                )
-                return SETTINGS
-            
-            # Vérifier si le canal existe déjà (via repository)
-            if repo_get_channel_by_username(channel_username, user_id):
-                await update.message.reply_text(
-                    "❌ This channel is already registered.",
-                    reply_markup=InlineKeyboardMarkup([
-                        [InlineKeyboardButton("📋 Gérer les canaux", callback_data="manage_channels")],
-                        [InlineKeyboardButton("↩️ Menu principal", callback_data="main_menu")]
-                    ])
-                )
-                return SETTINGS
-            
-            # Si on a déjà un nom d'affichage, enregistrer directement
-            if display_name and display_name != channel_username:
-                try:
-                    # Utiliser le dépôt pour gérer l'ajout (schéma et membership)
-                    repo_add_channel(display_name, channel_username, user_id)
-                    
-                    await update.message.reply_text(
-                        f"✅ Channel added successfully!\n\n"
-                        f"📺 **{display_name}** (@{channel_username})",
-                        reply_markup=InlineKeyboardMarkup([
-                            [InlineKeyboardButton("📋 Gérer les canaux", callback_data="manage_channels")],
-                            [InlineKeyboardButton("↩️ Menu principal", callback_data="main_menu")]
-                        ]),
-                        parse_mode='Markdown'
-                    )
-                    
-                    return SETTINGS
-                    
-                except Exception as e:
-                    logger.error(f"Error adding channel: {e}")
-                    await update.message.reply_text(
-                        "❌ Error adding channel.",
-                        reply_markup=InlineKeyboardMarkup([
-                            [InlineKeyboardButton("🔄 Réessayer", callback_data="add_channel")],
-                            [InlineKeyboardButton("↩️ Retour", callback_data="manage_channels")]
-                        ])
-                    )
-                    return SETTINGS
-            
-            # Auto-use default channel name/title without prompting
-            final_display_name = display_name or channel_username
-            try:
-                chat_ident = f"@{channel_username}" if not channel_username.startswith('@') else channel_username
-                chat = await context.bot.get_chat(chat_ident)
-                if getattr(chat, 'title', None):
-                    final_display_name = chat.title
-            except Exception:
-                pass
-
-            try:
-                # Utiliser le dépôt pour gérer l'ajout (schéma et membership)
-                repo_add_channel(final_display_name, channel_username, user_id)
-                await update.message.reply_text(
-                    f"✅ Channel added successfully!\n\n"
-                    f"📺 **{final_display_name}** (@{channel_username})",
-                    reply_markup=InlineKeyboardMarkup([
-                        [InlineKeyboardButton("📋 Gérer les canaux", callback_data="manage_channels")],
-                        [InlineKeyboardButton("↩️ Menu principal", callback_data="main_menu")]
-                    ]),
-                    parse_mode='Markdown'
-                )
-                return SETTINGS
-            except Exception as e:
-                logger.error(f"Error adding channel: {e}")
-                await update.message.reply_text(
-                    "❌ Error adding channel.",
-                    reply_markup=InlineKeyboardMarkup([
-                        [InlineKeyboardButton("🔄 Réessayer", callback_data="add_channel")],
-                        [InlineKeyboardButton("↩️ Retour", callback_data="manage_channels")]
-                    ])
-                )
-                return SETTINGS
+            # Utiliser notre nouvelle fonction qui gère les permissions
+            await handle_add_channel_message(update, context, user_input)
+            return SETTINGS
         
         # If we reach here, no add-channel context remains; redirect back
         
@@ -435,8 +328,8 @@ async def handle_channel_info(update: Update, context: ContextTypes.DEFAULT_TYPE
         await update.message.reply_text(
             "❌ No configuration in progress.",
             reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("⚙️ Paramètres", callback_data="settings")],
-                [InlineKeyboardButton("↩️ Menu principal", callback_data="main_menu")]
+                [InlineKeyboardButton("⚙️ Settings", callback_data="settings")],
+                [InlineKeyboardButton("↩️ Main Menu", callback_data="main_menu")]
             ])
         )
         return SETTINGS
@@ -478,19 +371,21 @@ async def handle_post_content(update: Update, context: ContextTypes.DEFAULT_TYPE
         if not selected_channel:
             logger.info("❌ No channel selected")
             await update.message.reply_text(
-                "❌ No channel selected. Please select a channel first.",
-                reply_markup=InlineKeyboardMarkup([[ 
-                    InlineKeyboardButton("🔄 Select a channel", callback_data="create_publication")
-                ]])
+                "⚠️ **Aucun canal n'est sélectionné pour ce post.**\n\n"
+                "👉 Veuillez d'abord sélectionner un canal, puis réessayez.",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("📺 Choisir un canal", callback_data="create_publication")],
+                    [InlineKeyboardButton("↩️ Menu principal", callback_data="main_menu")]
+                ])
             )
             return MAIN_MENU
         
-        # Limite de 24 posts
-        if len(posts) >= 15:
-            logger.info("❌ Limit of 15 posts reached")
+        # Limite du nombre d'éléments par post
+        if len(posts) >= 30:
+            logger.info("❌ Limit of 30 posts reached")
             try:
                 warn = await update.message.reply_text(
-                    "❌ Limit of 15 posts reached. Send current posts or delete some."
+                    "❌ Limit of 30 posts reached. Send current posts or delete some."
                 )
                 # Auto-suppression après 2 secondes
                 try:
@@ -593,10 +488,10 @@ async def _send_post_with_buttons(update: Update, context: ContextTypes.DEFAULT_
     try:
         # Interface simplifiée avec seulement les boutons essentiels
         keyboard = [
-            [InlineKeyboardButton("✨ Ajouter des réactions", callback_data=f"add_reactions_{post_index}")],
-            [InlineKeyboardButton("🔗 Ajouter un bouton URL", callback_data=f"add_url_button_{post_index}")],
+            [InlineKeyboardButton("✨ Add Reactions", callback_data=f"add_reactions_{post_index}")],
+            [InlineKeyboardButton("🔗 Add URL Button", callback_data=f"add_url_button_{post_index}")],
             [InlineKeyboardButton("✏️ Edit File", callback_data=f"edit_file_{post_index}")],
-            [InlineKeyboardButton("❌ Supprimer", callback_data=f"delete_post_{post_index}")]
+            [InlineKeyboardButton("❌ Delete", callback_data=f"delete_post_{post_index}")]
         ]
         
         reply_markup = InlineKeyboardMarkup(keyboard)
@@ -652,7 +547,7 @@ async def _send_post_with_buttons(update: Update, context: ContextTypes.DEFAULT_
         ], resize_keyboard=True, one_time_keyboard=False)
         
         await update.message.reply_text(
-            f"✅ {total_posts}/15 • Channel: {post_data['channel_name']}",
+            f"✅ {total_posts}/30 • Channel: {post_data['channel_name']}",
             reply_markup=reply_keyboard
         )
         
@@ -713,7 +608,7 @@ async def _send_post_preview(update: Update, context: ContextTypes.DEFAULT_TYPE,
         
     except Exception as e:
         logger.error(f"Erreur dans _send_post_preview: {e}")
-        await update.message.reply_text(f"❌ Erreur lors de l'aperçu du post {post_index + 1}")
+        await update.message.reply_text(f"❌ Error during post preview {post_index + 1}")
 
 
 async def handle_tag_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -758,7 +653,7 @@ async def handle_tag_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -
                         f"Heure locale : **{local_time.strftime('%H:%M')}** ({local_time.strftime('%d/%m/%Y')})\n\n"
                         f"Vos futures publications seront planifiées selon ce fuseau horaire.",
                         reply_markup=InlineKeyboardMarkup([[
-                            InlineKeyboardButton("↩️ Retour aux paramètres", callback_data="custom_settings")
+                            InlineKeyboardButton("↩️ Back to Settings", callback_data="custom_settings")
                         ]]),
                         parse_mode="Markdown"
                     )
@@ -782,8 +677,8 @@ async def handle_tag_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -
                     f"💡 Consultez la liste complète sur:\n"
                     f"https://en.wikipedia.org/wiki/List_of_tz_database_time_zones",
                     reply_markup=InlineKeyboardMarkup([[
-                        InlineKeyboardButton("🔄 Réessayer", callback_data="manual_timezone"),
-                        InlineKeyboardButton("↩️ Retour", callback_data="timezone_settings")
+                        InlineKeyboardButton("🔄 Retry", callback_data="manual_timezone"),
+                        InlineKeyboardButton("↩️ Back", callback_data="timezone_settings")
                     ]]),
                     parse_mode="Markdown"
                 )
@@ -868,8 +763,8 @@ async def handle_tag_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -
                     "Veuillez envoyer au moins un hashtag valide.\n"
                     "Exemple : `#tech #python #dev`",
                     reply_markup=InlineKeyboardMarkup([[
-                        InlineKeyboardButton("🔄 Réessayer", callback_data=f"edit_tag_{channel_username}"),
-                        InlineKeyboardButton("❌ Annuler", callback_data=f"custom_channel_{channel_username}")
+                        InlineKeyboardButton("🔄 Retry", callback_data=f"edit_tag_{channel_username}"),
+                        InlineKeyboardButton("❌ Cancel", callback_data=f"custom_channel_{channel_username}")
                     ]]),
                     parse_mode="Markdown"
                 )
@@ -902,8 +797,8 @@ async def handle_tag_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         
         # Boutons de retour
         keyboard = [
-            [InlineKeyboardButton("↩️ Paramètres du canal", callback_data=f"custom_channel_{channel_username}")],
-            [InlineKeyboardButton("🏠 Menu principal", callback_data="main_menu")]
+            [InlineKeyboardButton("↩️ Channel Settings", callback_data=f"custom_channel_{channel_username}")],
+            [InlineKeyboardButton("🏠 Main Menu", callback_data="main_menu")]
         ]
         
         await update.message.reply_text(

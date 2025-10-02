@@ -6,7 +6,7 @@
   "language.current": "Current language: {lang_flag} {lang_name}",
   "language.choose": "Choose your language:",
   "language.success": "✅ Language changed successfully!\n\nNew language: {lang_flag} {lang_name}",
-  "start.welcome": "👋 Welcome to Rename & Scheduler Bot!\n\nI help you rename captions/filenames, set a custom thumbnail, and schedule your posts to your channels.\n\n📋 Features:\n• Rename caption/filename\n• Set a custom thumbnail\n• Schedule post sending\n\n🎯 Commands:\n/start - Show this message\n/help - Show help and usage\n/addchannel - Add a new channel (Name @username or just @username)\n/setthumbnail - Set a thumbnail for a channel (use with @username or current selection)\n/settings - Open settings\n\n🛠 Admin commands:\n/addfsub - Add forced-subscription channels (admin)\n/delfsub - Delete forced-subscription channels (admin)\n/channels - List forced-subscription channels (admin)\n/status - Bot status",
+  "start.welcome": "👋 Welcome to Rename & Scheduler Bot!\n\nI help you rename captions/filenames and schedule your posts to your channels.\n\n📋 Features:\n• Rename caption/filename\n• Schedule post sending\n\n🎯 Commands:\n/start - Show this message\n/help - Show help and usage\n/addchannel - Add a new channel (Name @username or just @username)\n/settings - Open settings\n\n🛠 Admin commands:\n/addfsub - Add forced-subscription channels (admin)\n/delfsub - Delete forced-subscription channels (admin)\n/channels - List forced-subscription channels (admin)\n/status - Bot status",
   "help.title": "📚 Available Commands",
   "help.language": "/language - Change bot language",
   "help.timezone": "/timezone - Set your timezone",

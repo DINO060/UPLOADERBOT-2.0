@@ -5,10 +5,25 @@ import logging
 from dotenv import load_dotenv
 
 # Chargement des variables d'environnement
-load_dotenv()
+load_dotenv(override=True)  # S'assure de charger les variables même si elles existent déjà
 
 # Configuration du logging
 logger = logging.getLogger(__name__)
+
+# Variables d'environnement obligatoires
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+API_ID = os.getenv("API_ID")
+API_HASH = os.getenv("API_HASH")
+
+if not all([BOT_TOKEN, API_ID, API_HASH]):
+    missing = []
+    if not BOT_TOKEN:
+        missing.append("BOT_TOKEN")
+    if not API_ID:
+        missing.append("API_ID")
+    if not API_HASH:
+        missing.append("API_HASH")
+    raise ValueError(f"Les variables d'environnement suivantes sont manquantes: {', '.join(missing)}")
 
 # Chemins des dossiers
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -84,7 +99,12 @@ class ConversationStates:
     URL_BUTTONS = 7
     CONFIRMATION = 8
 
-# Configuration des limites
+# Configuration des limites des groupes de médias
+MAX_FILES_PER_MEDIA_GROUP = 30  # Nombre maximum de fichiers par post
+DELAY_BETWEEN_GROUPS = 1.0  # Délai d'attente entre les envois de sous-groupes (en secondes)
+MAX_MEDIA_GROUP_SIZE = 50 * 1024 * 1024  # 50MB en octets (limite de l'API Telegram)
+
+# Configuration des limites générales
 MAX_FILE_SIZE = 50 * 1024 * 1024  # 50 Mo
 MAX_STORAGE_SIZE = 1000 * 1024 * 1024  # 1 Go
 MAX_BACKUP_FILES = 5
@@ -128,9 +148,15 @@ BACKUP_INTERVAL = 86400  # 24 heures
 # Classe pour gérer les paramètres
 class Settings:
     def __init__(self):
-        self.bot_token = bot_config["token"]
-        self.api_id = bot_config["api_id"]
-        self.api_hash = bot_config["api_hash"]
+        # Variables d'environnement
+        self.BOT_TOKEN = os.getenv("BOT_TOKEN", "")
+        self.API_ID = int(os.getenv("API_ID", "0"))
+        self.API_HASH = os.getenv("API_HASH", "")
+        
+        # Configuration du bot
+        self.bot_token = self.BOT_TOKEN  # Pour la rétrocompatibilité
+        self.api_id = self.API_ID
+        self.api_hash = self.API_HASH
         self.db_config = db_config
         self.max_file_size = bot_config["max_file_size"]
         self.max_storage_size = MAX_STORAGE_SIZE
@@ -152,6 +178,10 @@ class Settings:
         
         # Configuration des dossiers
         self.temp_folder = str(TEMP_DIR)
+        
+        # Délai d'attente (en secondes) pour la disponibilité de Pyrogram au démarrage
+        # Peut être surchargé via la variable d'environnement PYRO_STARTUP_WAIT
+        self.pyro_startup_wait = int(os.getenv("PYRO_STARTUP_WAIT", "8"))
 
 # Instance unique des paramètres
 settings = Settings()

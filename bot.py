@@ -32,8 +32,10 @@ from telegram.ext import (
     filters,
     ContextTypes
 )
-from telegram.error import BadRequest, Forbidden
 from dotenv import load_dotenv
+# Ensure environment variables from .env are available before reading them below
+load_dotenv()
+from telegram.error import BadRequest, Forbidden
 import pytz
 import time
 import sys
@@ -41,13 +43,15 @@ import platform
 # Telethon supprimé: Pyrogram suffit pour le fallback MTProto
 import math
 from PIL import Image
+from database import init_models
+from handlers.reaction_handlers import setup_reaction_handlers
 from conversation_states import (
     MAIN_MENU, POST_CONTENT, POST_ACTIONS, SEND_OPTIONS, AUTO_DESTRUCTION,
     SCHEDULE_SEND, EDIT_POST, SCHEDULE_SELECT_CHANNEL, STATS_SELECT_CHANNEL,
     WAITING_CHANNEL_INFO, SETTINGS, BACKUP_MENU, WAITING_CHANNEL_SELECTION,
-    WAITING_PUBLICATION_CONTENT, WAITING_TIMEZONE, WAITING_THUMBNAIL,
+    WAITING_PUBLICATION_CONTENT, WAITING_TIMEZONE, WAITING_THUMBNAIL_RENAME_INPUT,
     WAITING_REACTION_INPUT, WAITING_URL_INPUT, WAITING_RENAME_INPUT,
-    WAITING_THUMBNAIL_RENAME_INPUT, WAITING_SCHEDULE_TIME, WAITING_EDIT_TIME,
+    WAITING_SCHEDULE_TIME, WAITING_EDIT_TIME,
     WAITING_CUSTOM_USERNAME, WAITING_TAG_INPUT
 )
 from config import settings
@@ -65,66 +69,17 @@ from database.channel_repo import init_db
 from handlers.my_chat_member import register_my_chat_member
 from handlers.connect_channel import register_connect
 # Imports schedule_handler supprimés - utilisation de callback_handlers.py
-from handlers.thumbnail_handler import (
-    handle_thumbnail_functions,
-    handle_add_thumbnail_to_post,
-    handle_set_thumbnail_and_rename,
-    handle_view_thumbnail,
-    handle_delete_thumbnail,
-    handle_thumbnail_input,
-    handle_add_thumbnail
-)
-from pyrogram import Client as PyroClient
+# Thumbnail handlers removed
+from utils.pyro_client import ensure_pyro_started, get_pyro
 from handlers.callback_handlers import handle_callback, send_post_now
 from handlers.message_handlers import handle_text, handle_media, handle_channel_info, handle_post_content, handle_tag_input
+from handlers.reaction_system import handle_reaction_toggle
 from handlers.media_handler import send_file_smart
 from i18n import SUPPORTED, set_user_lang, get_user_lang, t
 from telegram.request import HTTPXRequest
 from telegram.ext import ApplicationBuilder
 
 load_dotenv()
-
-# --- PYROGRAM: démarrage/arrêt propre, un seul client global ---
-# Chemins/vars
-APP_DIR = os.getenv("APP_DIR", os.getcwd())
-PYRO_WORKDIR = os.path.join(APP_DIR, ".pyro")
-
-API_ID = int(os.getenv("API_ID", "0") or 0)
-API_HASH = os.getenv("API_HASH", "")
-
-# IMPORTANT: no_updates=True pour éviter tout polling ou dispatcher interne de Pyrogram
-PYRO = PyroClient(
-    "uploader",
-    api_id=API_ID,
-    api_hash=API_HASH,
-    no_updates=True,
-    workdir=PYRO_WORKDIR,
-)
-
-async def _post_init(app):
-    # Démarre Pyrogram une seule fois au démarrage de PTB
-    if API_ID and API_HASH:
-        try:
-            await PYRO.start()
-            logger.info("✅ Client Pyrogram global démarré avec succès")
-            
-            # Exposer le client global pour les autres modules
-            from utils.pyro_client import set_global_pyro_client
-            set_global_pyro_client(PYRO)
-            
-        except Exception as e:
-            # Évite de tuer PTB si Pyrogram ne sert pas (ou si creds manquent)
-            logger.warning(f"⚠️ Impossible de démarrer Pyrogram: {e}")
-            pass
-
-async def _post_shutdown(app):
-    # Arrêt propre avant fermeture de la loop PTB
-    try:
-        await PYRO.stop()
-        logger.info("✅ Client Pyrogram global arrêté proprement")
-    except Exception as e:
-        logger.warning(f"⚠️ Erreur lors de l'arrêt de Pyrogram: {e}")
-        pass
 
 # Option pour réduire les httpx.ReadError
 request = HTTPXRequest(
@@ -844,81 +799,14 @@ def normalize_channel_username(channel_username):
         return None
     return channel_username.lstrip('@') if isinstance(channel_username, str) else None
 
-def debug_thumbnail_search(user_id, channel_username, db_manager):
-    """Fonction de debug pour diagnostiquer les problèmes de recherche de thumbnails"""
-    logger.info(f"=== DEBUG THUMBNAIL SEARCH ===")
-    logger.info(f"User ID: {user_id}")
-    logger.info(f"Channel Username Original: '{channel_username}'")
-    
-    # Normalisation
-    clean_username = normalize_channel_username(channel_username)
-    logger.info(f"Channel Username Normalisé: '{clean_username}'")
-    
-    # Tester différentes variantes
-    test_variants = [
-        channel_username,
-        clean_username,
-        f"@{clean_username}" if clean_username and not clean_username.startswith('@') else clean_username,
-        clean_username.lstrip('@') if clean_username else None
-    ]
-    
-    logger.info(f"Variants à tester: {test_variants}")
-    
-    # Tester chaque variant
-    for variant in test_variants:
-        if variant:
-            result = db_manager.get_thumbnail(variant, user_id)
-            logger.info(f"Test variant '{variant}': {result}")
-    
-    # Vérifier directement dans la base de données
-    try:
-        conn = sqlite3.connect(settings.db_path)
-        cursor = conn.cursor()
-        cursor.execute("SELECT channel_username, thumbnail_file_id FROM channel_thumbnails WHERE user_id = ?", (user_id,))
-        all_thumbnails = cursor.fetchall()
-        logger.info(f"TOUS les thumbnails pour user {user_id}: {all_thumbnails}")
-        conn.close()
-    except Exception as e:
-        logger.error(f"Erreur lors de la vérification DB: {e}")
-    
-    logger.info(f"=== FIN DEBUG ===")
-
-def ensure_thumbnail_table_exists():
-    """S'assure que la table channel_thumbnails existe"""
-    try:
-        conn = sqlite3.connect(settings.db_path)
-        cursor = conn.cursor()
-        
-        # Vérifier si la table existe
-        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='channel_thumbnails'")
-        table_exists = cursor.fetchone() is not None
-        
-        if not table_exists:
-            logger.info("Création de la table channel_thumbnails manquante...")
-            cursor.execute('''
-                CREATE TABLE channel_thumbnails (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    channel_username TEXT NOT NULL,
-                    user_id INTEGER NOT NULL,
-                    thumbnail_file_id TEXT NOT NULL,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    UNIQUE(channel_username, user_id)
-                )
-            ''')
-            conn.commit()
-            logger.info("✅ Table channel_thumbnails créée avec succès!")
-        else:
-            logger.info("✅ Table channel_thumbnails existe déjà")
-        
-        conn.close()
-        return True
-    except Exception as e:
-        logger.error(f"❌ Erreur lors de la création de la table channel_thumbnails: {e}")
-        return False
+# Thumbnail table functions removed
 
 # Initialisation de la base de données
 db_manager = DatabaseManager()
 db_manager.setup_database()
+
+# Initialize SQLAlchemy models
+init_models()
 
 # Vérifier et créer la table channel_thumbnails si nécessaire
 def ensure_channel_thumbnails_table():
@@ -965,7 +853,7 @@ def admin_only(func):
     async def wrapped(update, context, *args, **kwargs):
         user_id = update.effective_user.id
         if user_id not in settings.ADMIN_IDS:
-            await update.message.reply_text("❌ Vous n'avez pas les permissions nécessaires.")
+            await update.message.reply_text("❌ You don't have the necessary permissions.")
             return
         return await func(update, context, *args, **kwargs)
 
@@ -1267,15 +1155,15 @@ async def handle_rename_input(update, context):
                 # Afficher les réactions existantes
                 current_row = []
                 for reaction in reactions:
-                    current_row.append(InlineKeyboardButton(reaction, callback_data=f"react_{post_index}_{reaction}"))
+                    current_row.append(InlineKeyboardButton(reaction, callback_data=f"r:{reaction}:{post_index}"))
                     if len(current_row) == 4:
                         keyboard.append(current_row)
                         current_row = []
                 if current_row:
                     keyboard.append(current_row)
-                keyboard.append([InlineKeyboardButton("🗑️ Supprimer les réactions", callback_data=f"remove_reactions_{post_index}")])
+                keyboard.append([InlineKeyboardButton("🗑️ Remove Reactions", callback_data=f"remove_reactions_{post_index}")])
             else:
-                keyboard.append([InlineKeyboardButton("✨ Ajouter des réactions", callback_data=f"add_reactions_{post_index}")])
+                keyboard.append([InlineKeyboardButton("✨ Add Reactions", callback_data=f"add_reactions_{post_index}")])
 
             # Boutons URL existants
             for btn in post.get('buttons', []) or []:
@@ -1407,80 +1295,10 @@ async def handle_rename_input(update, context):
         return MAIN_MENU
 
 async def handle_thumbnail_rename_input(update, context):
-    """Gère la saisie du nouveau nom après l'ajout du thumbnail"""
+    """Gère la saisie du nouveau nom - fonction simplifiée sans thumbnails"""
     try:
-        if not context.user_data.get('awaiting_thumb_rename') or 'current_post_index' not in context.user_data:
-            await update.message.reply_text(
-                "❌ Aucun traitement thumbnail+rename en cours.",
-                reply_markup=InlineKeyboardMarkup([[ 
-                    InlineKeyboardButton("↩️ Menu principal", callback_data="main_menu")
-                ]])
-            )
-            return MAIN_MENU
-        
-        post_index = context.user_data['current_post_index']
-        new_filename = update.message.text.strip()
-        user_message_id = update.message.message_id
-        user_chat_id = update.effective_chat.id
-        
-        # Validation du nom de fichier
-        if not new_filename:
-            await update.message.reply_text(
-                "❌ Veuillez fournir un nom de fichier valide.",
-                reply_markup=InlineKeyboardMarkup([[ 
-                    InlineKeyboardButton("❌ Annuler", callback_data="main_menu")
-                ]])
-            )
-            return WAITING_THUMBNAIL_RENAME_INPUT
-        
-        # Stocker le nouveau nom temporairement
-        context.user_data['pending_rename_filename'] = new_filename
-        # Spécifique: pour 'Add Thumbnail + Rename', on veut renvoyer la vidéo en DOCUMENT
-        try:
-            post = context.user_data['posts'][post_index]
-            if post.get('type') == 'video':
-                context.user_data['force_document_for_video'] = True
-        except Exception:
-            pass
-
-        # Message de progression visible pour l'utilisateur
-        try:
-            progress_msg = await context.bot.send_message(
-                chat_id=update.effective_chat.id,
-                text=f"⏳ Traitement du fichier…"
-            )
-            context.user_data['progress_message_id'] = progress_msg.message_id
-        except Exception:
-            context.user_data.pop('progress_message_id', None)
-        
-        # Appeler la fonction de traitement
-        from handlers.callback_handlers import process_thumbnail_and_upload
-        success = await process_thumbnail_and_upload(update, context, post_index)
-        
-        # Supprimer le prompt et le message de l'utilisateur
-        try:
-            prompt_id = context.user_data.pop('thumbnail_rename_prompt_message_id', None)
-            if prompt_id:
-                await context.bot.delete_message(chat_id=user_chat_id, message_id=prompt_id)
-            await context.bot.delete_message(chat_id=user_chat_id, message_id=user_message_id)
-        except Exception:
-            pass
-        
-        if success:
-            # Nettoyer le contexte et revenir à l'état principal
-            context.user_data.pop('awaiting_thumb_rename', None)
-            context.user_data.pop('current_post_index', None)
-            context.user_data.pop('pending_rename_filename', None)
-            context.user_data.pop('force_document_for_video', None)
-            return WAITING_PUBLICATION_CONTENT
-        else:
-            await update.message.reply_text(
-                "❌ Erreur lors du traitement. Veuillez réessayer.",
-                reply_markup=InlineKeyboardMarkup([[ 
-                    InlineKeyboardButton("↩️ Menu principal", callback_data="main_menu")
-                ]])
-            )
-            return MAIN_MENU
+        # Cette fonction est conservée pour la compatibilité, redirige vers handle_rename_input
+        return await handle_rename_input(update, context)
     
     except Exception as e:
         logger.error(f"Erreur dans handle_thumbnail_rename_input: {e}")
@@ -1540,7 +1358,7 @@ async def handle_add_thumbnail_and_rename(update, context):
                      f"Aucun thumbnail trouvé pour @{clean_username}.\n"
                      f"Veuillez d'abord configurer un thumbnail dans les paramètres.",
                 reply_markup=InlineKeyboardMarkup([[
-                    InlineKeyboardButton("⚙️ Paramètres", callback_data="settings"),
+                    InlineKeyboardButton("⚙️ Settings", callback_data="settings"),
                     InlineKeyboardButton("↩️ Menu principal", callback_data="main_menu")
                 ]])
             )
@@ -1811,7 +1629,7 @@ async def send_preview_file(update, context, post_index):
                 caption=preview_text,
                 reply_markup=InlineKeyboardMarkup([
                     [InlineKeyboardButton("❌ Supprimer", callback_data=f"delete_file_{post_index}")],
-                    [InlineKeyboardButton("📝 Modifier la légende", callback_data=f"edit_caption_{post_index}")]
+                    [InlineKeyboardButton("📝 Edit Caption", callback_data=f"edit_caption_{post_index}")]
                 ])
             )
             await update.callback_query.answer("✅ Prévisualisation envoyée")
@@ -1854,6 +1672,61 @@ async def cleanup(application):
         logger.error(f"❌ Erreur lors du nettoyage: {e}")
 
 # -----------------------------------------------------------------------------
+# COMMANDE D'URGENCE POUR RE-LIER UN POST
+# -----------------------------------------------------------------------------
+
+async def cmd_bindchannel(update, context):
+    """Commande d'urgence pour re-lier un post à un canal"""
+    try:
+        args = context.args if hasattr(context, "args") else update.text.split()[1:]
+        if len(args) < 2:
+            await update.message.reply_text("Usage: /bindchannel <post_id> <@username|id>")
+            return
+        
+        post_id = int(args[0])
+        channel_ref = args[1]
+        
+        # Résoudre l'ID + valider l'accès
+        try:
+            chat = await context.bot.get_chat(channel_ref)  # accepte @username ou -100id
+        except Exception as e:
+            await update.message.reply_text(f"❌ Unable to access {channel_ref}: {e}")
+            return
+
+        channel_id = chat.id
+        channel_username = getattr(chat, "username", None)
+
+        # (Optionnel) vérifier que le bot est admin
+        try:
+            member = await context.bot.get_chat_member(chat.id, (await context.bot.get_me()).id)
+            if not (member.can_post_messages or member.status in ("administrator", "creator")):
+                await update.message.reply_text("❌ Le bot n'a pas les droits pour publier dans ce canal.")
+                return
+        except Exception:
+            pass
+
+        # MAJ DB
+        import sqlite3
+        with sqlite3.connect('bot.db') as conn:
+            cursor = conn.cursor()
+            cursor.execute("UPDATE posts SET channel_id = ? WHERE id = ?", (channel_id, post_id))
+            conn.commit()
+            
+            # Vérifier que la mise à jour a fonctionné
+            cursor.execute("SELECT channel_id FROM posts WHERE id = ?", (post_id,))
+            result = cursor.fetchone()
+            if result and result[0] == channel_id:
+                await update.message.reply_text(f"✅ Post {post_id} linked to {channel_username or channel_id}.\nYou can reopen the send menu.")
+            else:
+                await update.message.reply_text(f"❌ Error updating post {post_id}.")
+                
+    except ValueError:
+        await update.message.reply_text("❌ Post ID invalide. Utilisez un nombre.")
+    except Exception as e:
+        logger.error(f"❌ Erreur dans cmd_bindchannel: {e}")
+        await update.message.reply_text(f"❌ Erreur: {e}")
+
+# -----------------------------------------------------------------------------
 # GESTION SIMPLE DU BOUTON "ENVOYER" - UTILISE LES FONCTIONS EXISTANTES
 # -----------------------------------------------------------------------------
 
@@ -1882,9 +1755,60 @@ async def handle_send_button(update, context):
             )
             return WAITING_PUBLICATION_CONTENT
         
+        # ✅ VALIDATION - Vérifier que les posts existent en base de données et ont un canal
+        try:
+            from handlers.callback_handlers import ensure_post_has_channel
+            import sqlite3
+            
+            valid_posts = []
+            for post in posts:
+                if 'id' in post:
+                    # Vérifier que le post existe et a un canal
+                    ok, reason, channel = await ensure_post_has_channel('bot.db', post['id'], update.effective_user.id)
+                    if ok:
+                        valid_posts.append(post)
+                        logger.info(f"✅ Post {post['id']} validated with channel: {channel}")
+                    else:
+                        logger.warning(f"⚠️ Post {post['id']} validation failed: {reason}")
+                else:
+                    # Post sans ID (nouveau), on le garde
+                    valid_posts.append(post)
+            
+            posts = valid_posts
+            context.user_data['posts'] = posts
+            
+        except Exception as e:
+            logger.error(f"❌ Error validating posts in database: {e}")
+        
+        # Vérifier à nouveau après nettoyage
+        if not posts:
+            await update.message.reply_text(
+                "❌ No valid posts found.\n"
+                "Please create new content.",
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton("📝 New post", callback_data="create_publication")
+                ], [
+                    InlineKeyboardButton("↩️ Main menu", callback_data="main_menu")
+                ]])
+            )
+            return WAITING_PUBLICATION_CONTENT
+        
         # Obtenir les informations du canal
         selected_channel = context.user_data.get('selected_channel', {})
         channel = posts[0].get("channel") or selected_channel.get('username', '@default_channel')
+        
+        # ✅ VALIDATION DU CANAL - Vérifier que le canal est valide
+        if not channel or channel == '@default_channel' or not selected_channel:
+            logger.warning(f"⚠️ No valid channel found for posts. Channel: {channel}, Selected: {selected_channel}")
+            await update.message.reply_text(
+                "⚠️ **Aucun canal n'est sélectionné pour ce post.**\n\n"
+                "👉 Veuillez d'abord sélectionner un canal, puis réessayez.",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("📺 Choisir un canal", callback_data="choose_channel")],
+                    [InlineKeyboardButton("↩️ Menu principal", callback_data="main_menu")]
+                ])
+            )
+            return WAITING_PUBLICATION_CONTENT
         
         # Utiliser les MÊMES boutons que dans schedule_handler.py
         keyboard = [
@@ -2012,19 +1936,27 @@ async def notify_all_users_startup(app: Application) -> None:
             with sqlite3.connect(settings.db_config["path"]) as conn:
                 cursor = conn.cursor()
                 
-                # Récupérer tous les user_ids uniques depuis toutes les tables
-                cursor.execute("""
-                    SELECT DISTINCT user_id FROM (
-                        SELECT user_id FROM channels
-                        UNION
-                        SELECT user_id FROM user_timezones
-                        UNION
-                        SELECT user_id FROM user_usage
-                        UNION
-                        SELECT user_id FROM channel_thumbnails
-                    )
-                """)
-                
+                # Récupérer tous les user_ids uniques depuis toutes les tables (schema-aware)
+                # Détecter si channels.user_id existe, sinon fallback sur channel_members
+                cursor.execute("PRAGMA table_info(channels)")
+                ch_cols = [c[1] for c in cursor.fetchall()]
+                has_channels_user = 'user_id' in ch_cols
+                cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='channel_members'")
+                has_members = cursor.fetchone() is not None
+
+                subqueries = []
+                if has_channels_user:
+                    subqueries.append("SELECT user_id FROM channels")
+                elif has_members:
+                    subqueries.append("SELECT user_id FROM channel_members")
+                # Toujours inclure les autres tables user-scopées
+                subqueries.append("SELECT user_id FROM user_timezones")
+                subqueries.append("SELECT user_id FROM user_usage")
+                subqueries.append("SELECT user_id FROM channel_thumbnails")
+
+                union_sql = " UNION ".join(subqueries)
+                cursor.execute(f"SELECT DISTINCT user_id FROM ({union_sql})")
+
                 user_ids = [row[0] for row in cursor.fetchall()]
                 
                 if not user_ids:
@@ -2062,12 +1994,14 @@ def main():
     """Fonction principale du bot"""
     try:
         # Configuration de l'application avec Pyrogram global
+        # Vérifier que le token est bien défini
+        if not hasattr(settings, 'BOT_TOKEN') or not settings.BOT_TOKEN:
+            raise ValueError("Le token du bot n'est pas défini dans les paramètres")
+            
         application = (
             ApplicationBuilder()
-            .token(settings.bot_token)
+            .token(settings.BOT_TOKEN)
             .request(request)
-            .post_init(_post_init)
-            .post_shutdown(_post_shutdown)
             .build()
         )
         # Init DB (channel repository)
@@ -2104,6 +2038,18 @@ def main():
         async def post_init(app: Application) -> None:
             """Initialisation après le démarrage de l'application"""
             try:
+                # Démarrer Pyrogram en tâche de fond (singleton)
+                asyncio.create_task(ensure_pyro_started())
+                
+                # Attendre Pyrogram et enregistrer les handlers de réactions côté Pyrogram
+                try:
+                    pyro_client = await get_pyro()
+                    if pyro_client:
+                        await setup_reaction_handlers(pyro_client)
+                    else:
+                        logger.warning("⚠️ Pyrogram indisponible: handlers de réactions non enregistrés")
+                except Exception as rh_err:
+                    logger.warning(f"⚠️ Enregistrement des handlers de réactions échoué: {rh_err}")
                 # Démarrer le scheduler maintenant que l'event loop est actif
                 app.bot_data['scheduler_manager'].start()
                 logger.info("✅ Scheduler démarré avec succès")
@@ -2112,14 +2058,59 @@ def main():
                 logger.info(f"🔍 Scheduler running: {app.bot_data['scheduler_manager'].scheduler.running}")
                 logger.info(f"🔍 Scheduler state: {app.bot_data['scheduler_manager'].scheduler.state}")
                 
+                # Nettoyer TOUS les jobs orphelins avant de restaurer (aggressif)
+                try:
+                    scheduler = app.bot_data['scheduler_manager'].scheduler
+                    
+                    # Obtenir tous les IDs de posts valides
+                    with sqlite3.connect(settings.db_config["path"]) as conn:
+                        cursor = conn.cursor()
+                        cursor.execute('SELECT id FROM posts')
+                        valid_post_ids = {str(row[0]) for row in cursor.fetchall()}
+                    
+                    # Supprimer tous les jobs qui ne correspondent pas à des posts valides
+                    jobs_to_remove = []
+                    for job in scheduler.get_jobs():
+                        job_id = job.id
+                        should_remove = False
+                        
+                        if job_id.startswith('post_'):
+                            post_id = job_id.replace('post_', '')
+                            if post_id not in valid_post_ids:
+                                should_remove = True
+                        elif job_id.isdigit():
+                            if job_id not in valid_post_ids:
+                                should_remove = True
+                        
+                        if should_remove:
+                            jobs_to_remove.append(job_id)
+                    
+                    # Supprimer les jobs orphelins
+                    removed_count = 0
+                    for job_id in jobs_to_remove:
+                        try:
+                            scheduler.remove_job(job_id)
+                            removed_count += 1
+                            logger.info(f"🧹 Removed orphaned job: {job_id}")
+                        except Exception as job_err:
+                            logger.warning(f"⚠️ Failed to remove job {job_id}: {job_err}")
+                    
+                    if removed_count > 0:
+                        logger.info(f"🧹 {removed_count} job(s) orphelin(s) supprimé(s)")
+                    else:
+                        logger.info("✅ No orphaned jobs found")
+                        
+                except Exception as e:
+                    logger.warning(f"⚠️ Erreur lors du nettoyage des jobs orphelins: {e}")
+                
                 # Restaurer les posts planifiés
                 await restore_scheduled_posts(app)
                 
                 # Planifier les tâches de maintenance
                 await schedule_maintenance_tasks(app)
 
-                # Pyrogram est maintenant démarré automatiquement via _post_init
-                logger.info("✅ Client Pyrogram géré automatiquement")
+                # Pyrogram est maintenant démarré automatiquement via ensure_pyro_started()
+                logger.info("✅ Client Pyrogram géré automatiquement (singleton)")
                 
                 # Notifier tous les utilisateurs du démarrage du bot
                 await notify_all_users_startup(app)
@@ -2137,14 +2128,17 @@ def main():
             try:
                 logger.info("🔄 Restauration des posts planifiés...")
                 
-                # Récupérer tous les posts planifiés non envoyés
+                # Récupérer tous les posts planifiés non envoyés avec validation des canaux
                 with sqlite3.connect(settings.db_config["path"]) as conn:
                     cursor = conn.cursor()
                     cursor.execute("""
-                        SELECT id, scheduled_time, post_type, content, caption, channel_id
-                        FROM posts 
-                        WHERE scheduled_time > datetime('now') 
-                        AND (status = 'pending' OR status IS NULL)
+                        SELECT p.id, p.scheduled_time, p.post_type, p.content, p.caption, p.channel_id
+                        FROM posts p
+                        LEFT JOIN channels c ON (p.channel_id = c.id OR p.channel_id = c.username OR p.channel_id = '@' || c.username)
+                        WHERE p.scheduled_time > datetime('now') 
+                        AND (p.status = 'pending' OR p.status IS NULL)
+                        AND p.channel_id IS NOT NULL
+                        AND p.channel_id != ''
                     """)
                     scheduled_posts = cursor.fetchall()
                     
@@ -2157,14 +2151,39 @@ def main():
                     try:
                         post_id, scheduled_time_str, post_type, content, caption, channel_id = post_data
                         
+                        # ✅ VALIDATION SUPPLÉMENTAIRE : Vérifier que le post existe toujours
+                        cursor.execute("SELECT COUNT(*) FROM posts WHERE id = ?", (post_id,))
+                        if cursor.fetchone()[0] == 0:
+                            logger.warning(f"⚠️ Post {post_id} n'existe plus, ignoré lors de la restauration")
+                            continue
+                        
                         # Parser la date avec le bon fuseau horaire
                         from datetime import datetime
                         import pytz
                         
                         # Récupérer le fuseau horaire depuis la base de données
-                        # On cherche l'utilisateur propriétaire du post
-                        cursor.execute("SELECT c.user_id FROM channels c WHERE c.id = ?", (channel_id,))
-                        user_result = cursor.fetchone()
+                        # On cherche l'utilisateur propriétaire du post (schema-aware)
+                        cursor.execute("PRAGMA table_info(channels)")
+                        _cols = [r[1] for r in cursor.fetchall()]
+                        if 'user_id' in _cols:
+                            cursor.execute("SELECT c.user_id FROM channels c WHERE c.id = ?", (channel_id,))
+                            user_result = cursor.fetchone()
+                        else:
+                            # Fallback legacy: récupérer via channel_members si présent
+                            try:
+                                cursor.execute(
+                                    """
+                                    SELECT cm.user_id
+                                    FROM channels c
+                                    JOIN channel_members cm ON cm.channel_id = c.id
+                                    WHERE c.id = ?
+                                    LIMIT 1
+                                    """,
+                                    (channel_id,)
+                                )
+                                user_result = cursor.fetchone()
+                            except Exception:
+                                user_result = None
                         
                         if user_result:
                             user_id = user_result[0]
@@ -2285,6 +2304,7 @@ def main():
         application.add_handler(CommandHandler("delfsub", del_fsub, filters=filters.User(ADMIN_IDS)))
         application.add_handler(CommandHandler("channels", list_fsubs, filters=filters.User(ADMIN_IDS)))
         application.add_handler(CommandHandler("status", status_cmd))
+        application.add_handler(CommandHandler("bindchannel", cmd_bindchannel, filters=filters.User(ADMIN_IDS)))
         
         # Language handlers
         LANG_CB_PREFIX = "lang:"  # ex: "lang:fr"
@@ -2345,6 +2365,15 @@ def main():
                 return ConversationHandler.END
             return await command_handlers.settings(update, context)
 
+        # Handler PRIORITAIRE pour les réactions (group=-1 = priorité maximale)
+        async def global_reaction_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+            """Handler global pour les réactions avec priorité maximale"""
+            query = update.callback_query
+            if query and query.data and query.data.startswith('r:'):
+                return await handle_reaction_toggle(update, context)
+        
+        application.add_handler(CallbackQueryHandler(global_reaction_handler, pattern=r'^r:.*'), group=-1)
+
         # Handler global DEBUG: log all callback queries (helps diagnose capture/order issues)
         application.add_handler(CallbackQueryHandler(_debug_cbq, pattern=".*"), group=0)
 
@@ -2360,7 +2389,6 @@ def main():
                 CommandHandler("settings", settings_guarded),
                 CommandHandler("help", command_handlers.help),
                 CommandHandler("addchannel", command_handlers.addchannel_cmd),
-                CommandHandler("setthumbnail", command_handlers.setthumbnail_cmd),
                 CommandHandler("language", command_handlers.language_cmd),
             ],
             states={
@@ -2391,9 +2419,6 @@ def main():
                     # Handler prioritaire pour les boutons ReplyKeyboard
                     MessageHandler(reply_keyboard_filter, handle_reply_keyboard),
                     CallbackQueryHandler(handle_callback),
-                ],
-                WAITING_THUMBNAIL: [
-                    MessageHandler(filters.PHOTO, handle_thumbnail_input),
                 ],
                 WAITING_CUSTOM_USERNAME: [
                     # Handler prioritaire pour les boutons ReplyKeyboard

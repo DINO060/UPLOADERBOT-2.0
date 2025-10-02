@@ -12,12 +12,12 @@ class KeyboardManager:
                 InlineKeyboardButton("Today", callback_data="schedule_today"),
                 InlineKeyboardButton("Tomorrow", callback_data="schedule_tomorrow"),
             ],
-            [InlineKeyboardButton("↩️ Retour", callback_data="retour")]
+            [InlineKeyboardButton("↩️ Back", callback_data="retour")]
         ])
 
     @staticmethod
     def get_error_keyboard():
         """Returns the keyboard for error messages."""
         return InlineKeyboardMarkup([
-            [InlineKeyboardButton("↩️ Menu principal", callback_data="main_menu")]
+            [InlineKeyboardButton("↩️ Main Menu", callback_data="main_menu")]
         ]) 

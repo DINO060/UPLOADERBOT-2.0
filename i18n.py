@@ -56,7 +56,7 @@ def set_user_lang(user_id: int, lang: str):
         con.commit()
 
 
-def get_user_lang(user_id: Optional[int], fallback_lang_code: Optional[str] = None) -> str:
+def get_user_lang(user_id: Optional[int] = None, fallback_lang_code: Optional[str] = None) -> str:
     """Get user language preference with fallback chain"""
     # 1) Database preference
     if user_id is not None:
@@ -66,13 +66,13 @@ def get_user_lang(user_id: Optional[int], fallback_lang_code: Optional[str] = No
             if row and row[0] in SUPPORTED:
                 return row[0]
 
-    # 2) Telegram reported language_code (e.g., "fr", "en", "en-US")
-    if fallback_lang_code:
-        code = fallback_lang_code.split("-")[0].lower()
-        if code in SUPPORTED:
-            return code
+    # 2) DISABLED: Telegram language detection - Force English by default
+    # if fallback_lang_code:
+    #     code = fallback_lang_code.split("-")[0].lower()
+    #     if code in SUPPORTED:
+    #         return code
 
-    # 3) Default
+    # 3) Default - Always English unless explicitly set by user
     return DEFAULT_LANG
 
 

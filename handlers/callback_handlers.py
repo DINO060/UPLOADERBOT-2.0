@@ -11,7 +11,7 @@ import json
 import sys
 import time
 
-from utils.message_utils import MessageError, PostType
+from utils.message_utils import MessageError, PostType, safe_edit_message_text
 from database.manager import DatabaseManager
 from database.channel_repo import list_user_channels
 from utils.validators import InputValidator
@@ -25,12 +25,17 @@ from conversation_states import (
     WAITING_PUBLICATION_CONTENT,
     AUTO_DESTRUCTION,
     WAITING_TAG_INPUT,
-    WAITING_THUMBNAIL_RENAME_INPUT,
+
 )
 from utils.error_handler import handle_error
 from utils.scheduler import SchedulerManager
 from utils.scheduler_utils import send_scheduled_file
 from config import settings
+
+# Utilisation des constantes depuis settings
+MAX_FILES_PER_MEDIA_GROUP = settings.MAX_FILES_PER_MEDIA_GROUP
+DELAY_BETWEEN_GROUPS = settings.DELAY_BETWEEN_GROUPS
+MAX_MEDIA_GROUP_SIZE = settings.MAX_MEDIA_GROUP_SIZE
 
 
 logger = logging.getLogger(__name__)
@@ -90,15 +95,83 @@ def set_global_scheduler_manager(scheduler_manager):
     _global_scheduler_manager = scheduler_manager
     logger.info("✅ Global scheduler manager set")
 
+# Fonction pour valider qu'un post a un canal associé
+async def ensure_post_has_channel(db_path: str, post_id: int, user_id: int):
+    """
+    Vérifie qu'un post a un canal associé et essaie de le récupérer si nécessaire.
+    
+    Args:
+        db_path: Chemin vers la base de données
+        post_id: ID du post à vérifier
+        user_id: ID de l'utilisateur
+        
+    Returns:
+        tuple: (success: bool, reason: str, channel: str or None)
+    """
+    try:
+        import sqlite3
+        
+        with sqlite3.connect(db_path) as conn:
+            cursor = conn.cursor()
+            
+            # Vérifier si le post existe et a un canal
+            cursor.execute("SELECT channel_id FROM posts WHERE id = ?", (post_id,))
+            result = cursor.fetchone()
+            
+            if not result:
+                logger.warning(f"⚠️ Post {post_id} not found in database")
+                return False, "not_found", None
+            
+            channel_id = result[0]
+            
+            # Si le post a déjà un canal, c'est bon
+            if channel_id:
+                logger.info(f"✅ Post {post_id} has channel: {channel_id}")
+                return True, "ok", channel_id
+            
+            # Essayer de récupérer un canal par défaut pour l'utilisateur
+            logger.warning(f"⚠️ Post {post_id} has no channel, trying to find default channel for user {user_id}")
+            
+            # Chercher dans les canaux récents de l'utilisateur
+            cursor.execute("""
+                SELECT channel_id FROM channels 
+                WHERE user_id = ? 
+                ORDER BY created_at DESC 
+                LIMIT 1
+            """, (user_id,))
+            default_channel = cursor.fetchone()
+            
+            if default_channel:
+                default_channel_id = default_channel[0]
+                # Mettre à jour le post avec le canal par défaut
+                cursor.execute("""
+                    UPDATE posts 
+                    SET channel_id = ? 
+                    WHERE id = ?
+                """, (default_channel_id, post_id))
+                conn.commit()
+                
+                logger.info(f"✅ Post {post_id} bound to default channel: {default_channel_id}")
+                return True, "bound_from_default", default_channel_id
+            
+            return False, "missing", None
+            
+    except Exception as e:
+        logger.error(f"❌ Error in ensure_post_has_channel: {e}")
+        return False, "error", None
+
 # Fonction pour récupérer le gestionnaire de scheduler
 def get_scheduler_manager():
     """Gets the scheduler manager instance"""
     global _global_scheduler_manager
     
     try:
+        logger.info("🔍 Recherche du scheduler manager...")
+        
         # Priorité 1 : Utiliser le scheduler global s'il est défini
         if _global_scheduler_manager is not None:
             logger.info("✅ Scheduler manager retrieved from global variable")
+            logger.info(f"🔍 Global scheduler running: {_global_scheduler_manager.scheduler.running}")
             return _global_scheduler_manager
         
         # Priorité 2 : Essayer de récupérer depuis le module bot
@@ -108,17 +181,27 @@ def get_scheduler_manager():
                 bot_module = sys.modules['bot']
                 if hasattr(bot_module, 'application') and hasattr(bot_module.application, 'scheduler_manager'):
                     current_app = bot_module.application
-                    logger.info("✅ Scheduler manager retrieved from bot module")
-                    return current_app.scheduler_manager
+                    scheduler = current_app.bot_data.get('scheduler_manager')
+                    if scheduler:
+                        logger.info("✅ Scheduler manager retrieved from bot module")
+                        logger.info(f"🔍 Bot scheduler running: {scheduler.scheduler.running}")
+                        return scheduler
+                    else:
+                        logger.warning("⚠️ Bot module found but no scheduler in bot_data")
+                else:
+                    logger.warning("⚠️ Bot module found but no application or scheduler_manager")
         except Exception as e:
             logger.debug(f"Unable to retrieve from bot module: {e}")
         
         # Priorité 3 : Fallback - créer une instance temporaire mais avec warning
         logger.warning("⚠️ Scheduler manager not found - creating temporary instance")
         logger.warning("⚠️ Scheduled tasks will not work properly!")
-        return SchedulerManager("UTC")
+        temp_scheduler = SchedulerManager("UTC")
+        temp_scheduler.start()
+        return temp_scheduler
     except Exception as e:
         logger.error(f"Error retrieving scheduler manager: {e}")
+        logger.exception("Scheduler manager retrieval traceback:")
         return None
 
 # Fonction utilitaire pour éviter les erreurs "Message not modified" dans les callbacks
@@ -190,11 +273,167 @@ class CallbackError(Exception):
     """Exception pour les erreurs de callback"""
     pass
 
+async def handle_reaction_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, callback_data: str) -> None:
+    """
+    Gère les callbacks de réaction de façon simple et efficace.
+    Format: react_{post_id}_{emoji}
+    """
+    query = update.callback_query
+    user_id = update.effective_user.id
+    
+    # TOUJOURS répondre au callback en premier (sinon bouton "mort")
+    try:
+        await query.answer()
+        logger.info(f"🔔 answerCallbackQuery OK pour: {callback_data}")
+    except Exception as e:
+        logger.error(f"Erreur answerCallbackQuery: {e}")
+    
+    try:
+        logger.info(f"🎯 DÉBUT handle_reaction_callback: {callback_data}, user: {user_id}")
+        # Parser le callback_data: react_123_👍
+        parts = callback_data.split("_", 2)
+        if len(parts) != 3:
+            logger.error(f"Format callback invalide: {callback_data}")
+            return
+            
+        _, post_id, emoji = parts
+        post_id = int(post_id)
+        
+        # Récupérer l'info du message
+        message = query.message
+        chat_id = message.chat_id
+        message_id = message.message_id
+        
+        logger.info(f"🎯 Réaction: user={user_id}, post={post_id}, emoji={emoji}, msg={message_id}")
+        
+        # Connexion DB
+        db_path = _get_db_path()
+        with sqlite3.connect(db_path) as conn:
+            _ensure_reactions_schema(conn)
+            cursor = conn.cursor()
+            
+            # Vérifier si l'utilisateur a déjà réagi avec cet emoji
+            cursor.execute("""
+                SELECT 1 FROM reactions_votes 
+                WHERE chat_id = ? AND message_id = ? AND user_id = ? AND emoji = ?
+            """, (chat_id, message_id, user_id, emoji))
+            
+            already_reacted = cursor.fetchone() is not None
+            
+            if already_reacted:
+                # Retirer la réaction (toggle OFF)
+                cursor.execute("""
+                    DELETE FROM reactions_votes 
+                    WHERE chat_id = ? AND message_id = ? AND user_id = ? AND emoji = ?
+                """, (chat_id, message_id, user_id, emoji))
+                
+                cursor.execute("""
+                    UPDATE reactions_counts 
+                    SET count = CASE WHEN count > 0 THEN count - 1 ELSE 0 END 
+                    WHERE chat_id = ? AND message_id = ? AND emoji = ?
+                """, (chat_id, message_id, emoji))
+                
+                action = "removed"
+            else:
+                # Supprimer toute autre réaction de cet utilisateur sur ce message
+                cursor.execute("""
+                    DELETE FROM reactions_votes 
+                    WHERE chat_id = ? AND message_id = ? AND user_id = ?
+                """, (chat_id, message_id, user_id))
+                
+                # Décrémenter le compteur des anciennes réactions
+                cursor.execute("""
+                    UPDATE reactions_counts 
+                    SET count = CASE WHEN count > 0 THEN count - 1 ELSE 0 END 
+                    WHERE chat_id = ? AND message_id = ? AND EXISTS (
+                        SELECT 1 FROM reactions_votes rv 
+                        WHERE rv.chat_id = reactions_counts.chat_id 
+                        AND rv.message_id = reactions_counts.message_id 
+                        AND rv.user_id = ?
+                        AND rv.emoji = reactions_counts.emoji
+                    )
+                """, (chat_id, message_id, user_id))
+                
+                # Ajouter la nouvelle réaction
+                cursor.execute("""
+                    INSERT INTO reactions_votes (chat_id, message_id, user_id, emoji)
+                    VALUES (?, ?, ?, ?)
+                """, (chat_id, message_id, user_id, emoji))
+                
+                # Créer ou incrémenter le compteur
+                cursor.execute("""
+                    INSERT OR IGNORE INTO reactions_counts (chat_id, message_id, emoji, count)
+                    VALUES (?, ?, ?, 0)
+                """, (chat_id, message_id, emoji))
+                
+                cursor.execute("""
+                    UPDATE reactions_counts 
+                    SET count = count + 1 
+                    WHERE chat_id = ? AND message_id = ? AND emoji = ?
+                """, (chat_id, message_id, emoji))
+                
+                action = "added"
+            
+            conn.commit()
+        
+        # Mettre à jour les boutons avec les nouveaux compteurs
+        await update_reaction_keyboard(query, post_id, chat_id, message_id)
+        
+        logger.info(f"✅ Réaction {action}: {emoji} par user {user_id}")
+        
+    except Exception as e:
+        logger.error(f"❌ Erreur réaction callback: {e}")
+
+
+async def update_reaction_keyboard(query, post_id: int, chat_id: int, message_id: int):
+    """Met à jour le clavier de réaction avec les nouveaux compteurs"""
+    try:
+        # Récupérer les compteurs actuels
+        db_path = _get_db_path()
+        with sqlite3.connect(db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT emoji, count FROM reactions_counts 
+                WHERE chat_id = ? AND message_id = ? AND count > 0
+                ORDER BY emoji
+            """, (chat_id, message_id))
+            
+            counts = dict(cursor.fetchall())
+        
+        # Récupérer le clavier actuel et le mettre à jour
+        current_markup = query.message.reply_markup
+        if not current_markup:
+            return
+            
+        new_keyboard = []
+        for row in current_markup.inline_keyboard:
+            new_row = []
+            for button in row:
+                callback_data = button.callback_data
+                if callback_data and callback_data.startswith(f"react_{post_id}_"):
+                    # C'est un bouton de réaction
+                    emoji = callback_data.split("_", 2)[2]
+                    count = counts.get(emoji, 0)
+                    new_text = f"{emoji} {count}" if count > 0 else emoji
+                    new_row.append(InlineKeyboardButton(new_text, callback_data=callback_data))
+                else:
+                    # Autre bouton, on garde tel quel
+                    new_row.append(button)
+            new_keyboard.append(new_row)
+        
+        # Mettre à jour le message
+        await query.edit_message_reply_markup(reply_markup=InlineKeyboardMarkup(new_keyboard))
+        
+    except Exception as e:
+        logger.error(f"❌ Erreur mise à jour clavier: {e}")
+
+
 # Mapping des actions vers les gestionnaires
 CALLBACK_HANDLERS: Dict[str, HandlerType] = {
     "main_menu": "start",
     "create_publication": "create_publication",
     "planifier_post": "planifier_post",
+    "scheduled_posts": "planifier_post",  # Alias pour scheduled posts
     "modifier_heure": "handle_edit_time",
     "envoyer_maintenant": "handle_send_now",
     "annuler_publication": "handle_cancel_post",
@@ -228,8 +467,17 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     try:
         # Récupération du callback data complet
         callback_data = query.data
-        await query.answer()
         
+        # LOG TRÈS VISIBLE pour debug
+        logger.info(f"🔥 CALLBACK REÇU: data='{callback_data}', user={user_id}")
+        
+        # HANDLER PRIORITAIRE POUR LES RÉACTIONS (avec answer() intégré)
+        if callback_data.startswith("react_"):
+            logger.info(f"🚀 DIRECTION vers handle_reaction_callback: {callback_data}")
+            return await handle_reaction_callback(update, context, callback_data)
+        
+        # Pour tous les autres callbacks
+        await query.answer()
 
         # Cas spécifiques pour les callbacks
         if callback_data == "main_menu":
@@ -252,7 +500,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             # Aller directement à la sélection des canaux pour créer une publication
             return await handle_create_publication(update, context)
             
-        elif callback_data == "planifier_post":
+        elif callback_data == "planifier_post" or callback_data == "scheduled_posts":
             return await planifier_post(update, context)
         
         elif callback_data == "channel_stats":
@@ -260,8 +508,6 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             try:
                 from ..utils_sso import make_sso_link
             except ImportError:
-                import sys
-                import os
                 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
                 from utils_sso import make_sso_link
             
@@ -278,8 +524,8 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                     "⏱ Ce lien expire dans 60 secondes.\n\n"
                     "Cliquez sur le bouton ci-dessous pour accéder à vos statistiques:",
                     reply_markup=InlineKeyboardMarkup([
-                        [InlineKeyboardButton("🌐 Ouvrir les Statistiques", url=sso_link)],
-                        [InlineKeyboardButton("↩️ Retour", callback_data="main_menu")]
+                        [InlineKeyboardButton("🌐 Open Statistics", url=sso_link)],
+                        [InlineKeyboardButton("↩️ Back", callback_data="main_menu")]
                     ])
                 )
             except Exception as e:
@@ -289,7 +535,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                     "❌ Erreur lors de la génération du lien d'accès.\n"
                     "Veuillez réessayer plus tard.",
                     reply_markup=InlineKeyboardMarkup([
-                        [InlineKeyboardButton("↩️ Retour", callback_data="main_menu")]
+                        [InlineKeyboardButton("↩️ Back", callback_data="main_menu")]
                     ])
                 )
             return MAIN_MENU
@@ -309,11 +555,11 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             keyboard = [
                 [InlineKeyboardButton("5 minutes", callback_data="auto_dest_300")],
                 [InlineKeyboardButton("30 minutes", callback_data="auto_dest_1800")],
-                [InlineKeyboardButton("1 heure", callback_data="auto_dest_3600")],
-                [InlineKeyboardButton("6 heures", callback_data="auto_dest_21600")],
-                [InlineKeyboardButton("24 heures", callback_data="auto_dest_86400")],
-                [InlineKeyboardButton("❌ Désactiver", callback_data="auto_dest_0")],
-                [InlineKeyboardButton("↩️ Retour", callback_data="main_menu")]
+                [InlineKeyboardButton("1 hour", callback_data="auto_dest_3600")],
+                [InlineKeyboardButton("6 hours", callback_data="auto_dest_21600")],
+                [InlineKeyboardButton("24 hours", callback_data="auto_dest_86400")],
+                [InlineKeyboardButton("❌ Disable", callback_data="auto_dest_0")],
+                [InlineKeyboardButton("↩️ Back", callback_data="main_menu")]
             ]
             
             await safe_edit_callback_message(
@@ -332,10 +578,10 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                 context.user_data.pop('auto_destruction_time', None)
                 await safe_edit_callback_message(
                     query,
-                    "✅ **Auto-destruction désactivée**\n\n"
-                    "Vos messages ne seront pas supprimés automatiquement.",
+                    "✅ **Auto-destruction disabled**\n\n"
+                    "Your messages will not be automatically deleted.",
                     reply_markup=InlineKeyboardMarkup([[
-                        InlineKeyboardButton("↩️ Retour au menu d'envoi", callback_data="main_menu")
+                        InlineKeyboardButton("↩️ Back to send menu", callback_data="main_menu")
                     ]]),
                     parse_mode='Markdown'
                 )
@@ -353,11 +599,11 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                 
                 await safe_edit_callback_message(
                     query,
-                    f"✅ **Auto-destruction configurée**\n\n"
-                    f"⏰ Durée : {time_str}\n\n"
-                    f"Vos prochains messages se supprimeront automatiquement après {time_str}.",
+                    f"✅ **Auto-destruction configured**\n\n"
+                    f"⏰ Duration: {time_str}\n\n"
+                    f"Your next messages will be automatically deleted after {time_str}.",
                     reply_markup=InlineKeyboardMarkup([[
-                        InlineKeyboardButton("↩️ Retour au menu d'envoi", callback_data="main_menu")
+                        InlineKeyboardButton("↩️ Back to send menu", callback_data="main_menu")
                     ]]),
                     parse_mode='Markdown'
                 )
@@ -366,6 +612,8 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             
         elif callback_data in ("schedule_today", "schedule_tomorrow", "schedule_overmorrow"):
             # Stocker le jour sélectionné et rediriger vers handle_schedule_time
+            logger.info(f"🔍 DEBUG: sélection jour {callback_data}")
+            
             if callback_data == "schedule_today":
                 context.user_data['schedule_day'] = 'today'
             elif callback_data == "schedule_tomorrow":
@@ -375,6 +623,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             jour = "today" if context.user_data['schedule_day'] == 'today' else ("tomorrow" if context.user_data['schedule_day'] == 'tomorrow' else "overmorrow")
             
             logger.info(f"📅 Selected day: {jour}")
+            logger.info(f"🔍 DEBUG: user_data après sélection jour: editing_post_id={context.user_data.get('editing_post_id')}, current_scheduled_post={bool(context.user_data.get('current_scheduled_post'))}")
 
             # Mise à jour du message pour indiquer que l'heure est attendue
             await query.edit_message_text(
@@ -394,8 +643,14 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             return await handle_edit_time(update, context)
             
         elif callback_data == "envoyer_maintenant":
-            # Unification : utilise la même fonction send_post_now
-            return await send_post_now(update, context)
+            # Vérifier s'il s'agit d'un post planifié ou d'un nouveau post
+            current_scheduled_post = context.user_data.get('current_scheduled_post')
+            if current_scheduled_post:
+                logger.info(f"🚀 Envoi immédiat d'un post planifié (ID: {current_scheduled_post.get('id')})")
+                return await send_post_now(update, context, scheduled_post=current_scheduled_post)
+            else:
+                logger.info("🚀 Envoi immédiat d'un nouveau post")
+                return await send_post_now(update, context)
             
         elif callback_data == "annuler_publication":
             return await handle_cancel_post(update, context)
@@ -451,60 +706,9 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         elif callback_data == "custom_settings":
             return await custom_settings_menu(update, context)
             
-        elif callback_data == "thumbnail_menu":
-            # Gestion du menu thumbnail
-            from .thumbnail_handler import handle_thumbnail_functions
-            return await handle_thumbnail_functions(update, context)
-            
-        elif callback_data == "view_thumbnail":
-            # Afficher le thumbnail actuel
-            from .thumbnail_handler import handle_view_thumbnail
-            return await handle_view_thumbnail(update, context)
-            
-        elif callback_data == "delete_thumbnail":
-            # Supprimer le thumbnail
-            from .thumbnail_handler import handle_delete_thumbnail
-            return await handle_delete_thumbnail(update, context)
-            
-        elif callback_data == "add_thumbnail":
-            # Ajouter un thumbnail
-            from .thumbnail_handler import handle_add_thumbnail
-            return await handle_add_thumbnail(update, context)
-            
-        elif callback_data == "confirm_large_thumbnail":
-            # Confirmer l'utilisation d'un thumbnail volumineux
-            temp_thumbnail = context.user_data.get('temp_thumbnail')
-            if temp_thumbnail:
-                # Utiliser le thumbnail temporaire même s'il est volumineux
-                selected_channel = context.user_data.get('selected_channel', {})
-                channel_username = selected_channel.get('username')
-                user_id = update.effective_user.id
-                
-                if channel_username:
-                    clean_username = normalize_channel_username(channel_username)
-                    db_manager = DatabaseManager()
-                    try:
-                        success = db_manager.save_thumbnail(clean_username, user_id, temp_thumbnail)
-                        if success:
-                            context.user_data['waiting_for_channel_thumbnail'] = False
-                            context.user_data.pop('temp_thumbnail', None)
-                            await query.edit_message_text(
-                                f"✅ Large thumbnail saved for @{clean_username}!",
-                                reply_markup=InlineKeyboardMarkup([[ 
-                                    InlineKeyboardButton("↩️ Back", callback_data=f"custom_channel_{clean_username}")
-                                ]])
-                            )
-                            return SETTINGS
-                    except Exception as e:
-                        logger.error(f"Error while saving large thumbnail: {e}")
 
-            await query.edit_message_text(
-                "❌ Error while saving thumbnail.",
-                reply_markup=InlineKeyboardMarkup([[ 
-                    InlineKeyboardButton("↩️ Back", callback_data="thumbnail_menu")
-                ]])
-            )
-            return SETTINGS
+            
+
             
         elif callback_data.startswith("delete_channel_"):
             channel_id = callback_data.replace("delete_channel_", "")
@@ -523,7 +727,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                 "📋 **Aperçu général**\n\n"
                 "Cette fonctionnalité sera bientôt disponible.",
                 reply_markup=InlineKeyboardMarkup([[
-                    InlineKeyboardButton("↩️ Retour", callback_data="main_menu")
+                    InlineKeyboardButton("↩️ Back", callback_data="main_menu")
                 ]])
             )
             return MAIN_MENU
@@ -548,70 +752,9 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             post_index = callback_data.replace("edit_file_", "")
             return await show_edit_file_menu(update, context, int(post_index))
             
-        elif callback_data.startswith("add_thumbnail_"):
-            post_index = callback_data.replace("add_thumbnail_", "")
-            return await handle_add_thumbnail_to_post_callback(update, context, int(post_index))
+
             
-        elif callback_data.startswith("add_thumb_"):
-            # Reproduit la logique du renambot: afficher MEDIA INFO puis attendre le nouveau nom
-            try:
-                parts = callback_data.split('_')
-                post_index = int(parts[-1])
-            except Exception:
-                await query.answer("❌ Erreur de format", show_alert=True)
-                return MAIN_MENU
 
-            # Valider le post
-            if 'posts' not in context.user_data or post_index >= len(context.user_data['posts']):
-                await query.answer("❌ Post introuvable", show_alert=True)
-                return MAIN_MENU
-
-            post = context.user_data['posts'][post_index]
-            file_name = post.get('filename', 'unnamed_file')
-            file_size = post.get('file_size', 0)
-            extension = os.path.splitext(file_name)[1] or "Unknown"
-            mime_type = post.get('mime_type', 'Unknown')
-            dc_id = post.get('dc_id', 'N/A')
-
-            # Vérifier qu'un thumbnail est défini pour le canal sélectionné
-            channel_username = post.get('channel', context.user_data.get('selected_channel', {}).get('username'))
-            clean_username = normalize_channel_username(channel_username)
-            db_manager = DatabaseManager()
-            thumbnail_data = db_manager.get_thumbnail(clean_username, update.effective_user.id)
-            if not thumbnail_data:
-                await query.answer("❌ Aucun thumbnail défini pour ce canal", show_alert=True)
-                return MAIN_MENU
-
-            info_card = (
-                "📁 <b>MEDIA INFO</b>\n\n"
-                f"📁 <b>FILE NAME:</b> <code>{file_name}</code>\n"
-                f"🧩 <b>EXTENSION:</b> <code>{extension}</code>\n"
-                f"📦 <b>FILE SIZE:</b> {file_size}\n"
-                f"🪄 <b>MIME TYPE:</b> {mime_type}\n"
-                f"🧭 <b>DC ID:</b> {dc_id}\n\n"
-                "<b>PLEASE ENTER THE NEW FILENAME WITH EXTENSION AND REPLY THIS MESSAGE.</b>"
-            )
-
-            # Supprimer le message du menu 'Edit File' puis envoyer un nouveau message
-            try:
-                await context.bot.delete_message(chat_id=query.message.chat_id, message_id=query.message.message_id)
-            except Exception:
-                pass
-
-            ask_msg = await context.bot.send_message(
-                chat_id=query.message.chat_id,
-                text=info_card,
-                parse_mode='HTML',
-                reply_markup=InlineKeyboardMarkup([[ 
-                    InlineKeyboardButton("❌ Annuler", callback_data=f"cancel_thumbnail_rename_{post_index}")
-                ]])
-            )
-
-            # Stocker l'action et l'index pour le flux de renommage
-            context.user_data['awaiting_thumb_rename'] = True
-            context.user_data['current_post_index'] = post_index
-            context.user_data['thumbnail_rename_prompt_message_id'] = ask_msg.message_id
-            return WAITING_THUMBNAIL_RENAME_INPUT
             
         elif callback_data.startswith("add_reactions_"):
             # Gestion de l'ajout de réactions
@@ -720,22 +863,9 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             return WAITING_PUBLICATION_CONTENT
 
         elif callback_data.startswith("cancel_thumbnail_rename_"):
-            # Annuler le prompt MEDIA INFO (Add Thumbnail + Rename)
+            # Fonction désactivée - thumbnails supprimés
             try:
-                context.user_data.pop('awaiting_thumb_rename', None)
-                context.user_data.pop('current_post_index', None)
-                context.user_data.pop('pending_rename_filename', None)
-                context.user_data.pop('force_document_for_video', None)
-                prompt_id = context.user_data.pop('thumbnail_rename_prompt_message_id', None)
-                if prompt_id:
-                    try:
-                        await context.bot.delete_message(chat_id=query.message.chat_id, message_id=prompt_id)
-                    except Exception:
-                        pass
-                try:
-                    await query.delete_message()
-                except Exception:
-                    pass
+                await query.delete_message()
             except Exception:
                 pass
             return WAITING_PUBLICATION_CONTENT
@@ -749,8 +879,8 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             # Gestion de l'affichage des posts planifiés
             return await show_scheduled_post(update, context)
 
-        # GESTIONNAIRE POUR LES RÉACTIONS (format: react_{post_index}_{emoji}) - PERSISTENT/TOGGLE
-        elif callback_data.startswith("react_"):
+        # ANCIEN GESTIONNAIRE POUR LES RÉACTIONS - DÉSACTIVÉ (handler prioritaire utilisé)
+        elif False and callback_data.startswith("react_"):
             try:
                 logger.debug(f"[react_] callback received: data='{callback_data}', user_id={user_id}")
                 parts = callback_data.split("_", 2)
@@ -966,6 +1096,7 @@ async def handle_edit_time(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     """
     query = update.callback_query
     try:
+        await query.answer()
         post_id = context.user_data.get('current_post_id')
         if not post_id:
             raise CallbackError("Aucune publication en cours")
@@ -1005,6 +1136,7 @@ async def handle_cancel_post(update: Update, context: ContextTypes.DEFAULT_TYPE)
     """
     query = update.callback_query
     try:
+        await query.answer()
         if context.user_data.get('confirming_cancel'):
             post_id = context.user_data.get('current_post_id')
             if not post_id:
@@ -1014,14 +1146,14 @@ async def handle_cancel_post(update: Update, context: ContextTypes.DEFAULT_TYPE)
             if not db_manager or not db_manager.delete_post(post_id):
                 raise CallbackError("Impossible d'annuler la publication")
 
-            await query.edit_message_text("✅ Publication annulée")
+            await query.edit_message_text("✅ Publication cancelled")
             context.user_data.pop('confirming_cancel', None)
         else:
             context.user_data['confirming_cancel'] = True
             await query.edit_message_text(
-                "⚠️ Êtes-vous sûr de vouloir annuler cette publication ?",
+                "⚠️ Are you sure you want to cancel this publication?",
                 reply_markup=[[
-                    InlineKeyboardButton("Oui", callback_data="annuler_publication"),
+                    InlineKeyboardButton("Yes", callback_data="annuler_publication"),
                     InlineKeyboardButton("Non", callback_data="retour")
                 ]]
             )
@@ -1047,6 +1179,7 @@ async def handle_preview(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     """
     query = update.callback_query
     try:
+        await query.answer()
         post_data = context.user_data.get('current_post')
         if not post_data:
             raise CallbackError("Aucune publication en cours")
@@ -1293,7 +1426,55 @@ async def handle_schedule_time(update: Update, context: ContextTypes.DEFAULT_TYP
             return SCHEDULE_SEND
 
         success_count = 0
-        channel_id = context.user_data.get("selected_channel", {}).get("id")
+        
+        # Vérifier si on modifie un post existant
+        editing_post_id = context.user_data.get('editing_post_id')
+        current_scheduled_post = context.user_data.get('current_scheduled_post')
+        
+        logger.info(f"🔍 DEBUG handle_schedule_time: editing_post_id={editing_post_id}, current_scheduled_post={bool(current_scheduled_post)}")
+        
+        if editing_post_id and current_scheduled_post:
+            # Mode modification : utiliser les infos du post existant
+            channel_id = current_scheduled_post.get('channel_id')
+            channel_name = current_scheduled_post.get('channel_name', str(channel_id))
+            channel_username = None  # Pas besoin de résoudre l'username
+            logger.info(f"✅ Mode modification du post {editing_post_id}, canal: {channel_name} (ID: {channel_id})")
+        else:
+            # Mode création normale : utiliser le canal sélectionné
+            selected_channel = context.user_data.get("selected_channel", {})
+            channel_username = selected_channel.get("username")
+            channel_name = selected_channel.get("name", "Canal inconnu")
+            
+            logger.info(f"🔍 Mode création: selected_channel={selected_channel}")
+            
+            if not channel_username:
+                logger.error(f"❌ Aucun username de canal dans selected_channel: {selected_channel}")
+                await update.message.reply_text(
+                    "❌ Aucun canal sélectionné. Sélectionnez d'abord un canal."
+                )
+                return
+            
+        # Résoudre l'username en ID numérique Telegram (seulement en mode création)
+        if not editing_post_id and channel_username:
+            try:
+                # Assurer que l'username a le format @username
+                if not channel_username.startswith('@'):
+                    channel_username = f"@{channel_username}"
+                    
+                # Utiliser Telegram Bot API pour résoudre l'ID
+                chat = await context.bot.get_chat(channel_username)
+                channel_id = chat.id
+                logger.info(f"✅ Canal '{channel_name}' ({channel_username}) résolu: ID = {channel_id}")
+                
+            except Exception as resolve_error:
+                logger.error(f"❌ Impossible de résoudre le canal {channel_username}: {resolve_error}")
+                await update.message.reply_text(
+                    f"❌ Impossible d'accéder au canal {channel_username}. Vérifiez que:\n"
+                    f"• Le bot est admin du canal\n"
+                    f"• Le nom du canal est correct\n"
+                    f"• Le canal existe et est accessible"
+                )
+                return
 
         # Si nous modifions un post existant
         if 'current_scheduled_post' in context.user_data:
@@ -1387,7 +1568,7 @@ async def handle_schedule_time(update: Update, context: ContextTypes.DEFAULT_TYP
                         has_reactions = 'reactions' in cols
 
                         insert_columns = ['channel_id']
-                        params = [channel_id]
+                        params = [int(channel_id)]  # ✅ Forcer le type INTEGER
                         if has_type:
                             insert_columns += ['type', 'post_type']
                             params += [post_type, post_type]
@@ -1410,8 +1591,23 @@ async def handle_schedule_time(update: Update, context: ContextTypes.DEFAULT_TYP
                         cursor.execute(sql, params)
                         post_id = cursor.lastrowid
                         conn.commit()
+                        
+                        # ✅ VALIDATION : Vérifier que le post a été créé correctement
+                        cursor.execute("SELECT id FROM posts WHERE id = ?", (post_id,))
+                        if not cursor.fetchone():
+                            logger.error(f"❌ Échec de la création du post {post_id} en base de données")
+                            continue
+                        
+                        logger.info(f"✅ Post {post_id} créé avec succès en base de données")
+                        
+                        # ✅ LOG DE DIAGNOSTIC COMPLET
+                        logger.info(f"📊 Post scheduling debug:")
+                        logger.info(f"   post_id: {post_id} (type: {type(post_id)})")
+                        logger.info(f"   channel_id: {channel_id} (type: {type(channel_id)})")
+                        logger.info(f"   scheduled_time: {target_date_local.strftime('%Y-%m-%d %H:%M:%S')}")
+                        logger.info(f"   db_path: {os.path.abspath(settings.db_config['path'])}")
 
-                    # Créer le job de planification
+                    # Créer le job de planification SEULEMENT si le post existe
                     job_id = f"post_{post_id}"
                     
                     # ✅ CORRECTION : Créer une fonction wrapper synchrone simple
@@ -1441,17 +1637,45 @@ async def handle_schedule_time(update: Update, context: ContextTypes.DEFAULT_TYP
 
                     # Planifier le job
                     if scheduler_manager:
-                        scheduler_manager.scheduler.add_job(
-                            func=send_post_job,
-                            trigger="date",
-                            run_date=target_date_local,
-                            id=job_id,
-                            replace_existing=True
-                        )
-                        logger.info(f"✅ Job {job_id} créé pour {target_date_local}")
-                        success_count += 1
+                        try:
+                            scheduler_manager.scheduler.add_job(
+                                func=send_post_job,
+                                trigger="date",
+                                run_date=target_date_local,
+                                id=job_id,
+                                replace_existing=True
+                            )
+                            logger.info(f"✅ Job {job_id} créé pour {target_date_local}")
+                            logger.info(f"🔍 Scheduler running: {scheduler_manager.scheduler.running}")
+                            logger.info(f"🔍 Jobs count: {len(scheduler_manager.scheduler.get_jobs())}")
+                            success_count += 1
+                        except Exception as job_error:
+                            logger.error(f"❌ Erreur lors de l'ajout du job {job_id}: {job_error}")
+                            logger.exception("Job creation traceback:")
                     else:
                         logger.error("❌ Scheduler manager introuvable")
+                        logger.error("🔍 Tentative de récupération du scheduler manager...")
+                        # Essayer de récupérer depuis le contexte
+                        if hasattr(context, 'application') and context.application:
+                            app_scheduler = context.application.bot_data.get('scheduler_manager')
+                            if app_scheduler:
+                                logger.info("✅ Scheduler manager trouvé dans context.application")
+                                try:
+                                    app_scheduler.scheduler.add_job(
+                                        func=send_post_job,
+                                        trigger="date",
+                                        run_date=target_date_local,
+                                        id=job_id,
+                                        replace_existing=True
+                                    )
+                                    logger.info(f"✅ Job {job_id} créé via context.application")
+                                    success_count += 1
+                                except Exception as fallback_error:
+                                    logger.error(f"❌ Erreur avec le scheduler de fallback: {fallback_error}")
+                            else:
+                                logger.error("❌ Aucun scheduler manager trouvé dans context.application")
+                        else:
+                            logger.error("❌ Context.application non disponible")
 
                 except Exception as e:
                     logger.error(f"❌ Erreur lors de la planification du post: {e}")
@@ -1502,8 +1726,13 @@ async def handle_edit_time(update: Update, context: ContextTypes.DEFAULT_TYPE):
         query = update.callback_query
         await query.answer()
 
+        logger.info("🔍 DEBUG handle_edit_time: début de la fonction")
+        
         post = context.user_data.get('current_scheduled_post')
+        logger.info(f"🔍 DEBUG handle_edit_time: post trouvé = {bool(post)}")
+        
         if not post:
+            logger.error("❌ DEBUG handle_edit_time: aucun post trouvé dans current_scheduled_post")
             await query.edit_message_text(
                 "❌ Publication introuvable.",
                 reply_markup=InlineKeyboardMarkup([[
@@ -1537,10 +1766,12 @@ async def handle_edit_time(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
         context.user_data['editing_post_id'] = post['id']
+        logger.info(f"✅ DEBUG handle_edit_time: editing_post_id défini à {post['id']}, retour SCHEDULE_SEND")
         return SCHEDULE_SEND
 
     except Exception as e:
-        logger.error(f"Erreur dans handle_edit_time : {e}")
+        logger.error(f"❌ Erreur dans handle_edit_time : {e}")
+        logger.exception("Traceback complet:")
         await query.edit_message_text(
             "❌ Une erreur est survenue lors de la modification de l'heure.",
             reply_markup=InlineKeyboardMarkup([[
@@ -1597,7 +1828,7 @@ async def handle_confirm_cancel(update: Update, context: ContextTypes.DEFAULT_TY
     
     try:
         if 'current_scheduled_post' not in context.user_data:
-            await query.message.reply_text("❌ Aucun post planifié sélectionné.")
+            await query.message.reply_text("❌ No scheduled post selected.")
             return MAIN_MENU
             
         post = context.user_data['current_scheduled_post']
@@ -1809,19 +2040,16 @@ async def custom_channel_settings(update: Update, context: ContextTypes.DEFAULT_
         )
         return SETTINGS
     
-    # Récupérer les infos du thumbnail et du tag
+    # Récupérer les infos du tag
     db_manager = DatabaseManager()
-    thumbnail_exists = db_manager.get_thumbnail(channel_username, user_id) is not None
     tag = db_manager.get_channel_tag(channel_username, user_id)
     
     keyboard = [
-        [InlineKeyboardButton("🖼️ Manage thumbnail", callback_data="thumbnail_menu")],
         [InlineKeyboardButton("🏷️ Add a hashtag", callback_data=f"edit_tag_{channel_username}")],
         [InlineKeyboardButton("↩️ Back", callback_data=f"channel_{channel_username}")]
     ]
     
     message_text = f"⚙️ **Settings for {channel['name']}**\n\n"
-    message_text += f"🖼️ Thumbnail: {'✅ Set' if thumbnail_exists else '❌ Not set'}\n"
     message_text += f"🏷️ Tag: {tag if tag else 'No tag set'}\n"
     
     # Stocker le canal dans le contexte pour les opérations suivantes
@@ -2057,7 +2285,7 @@ async def handle_set_timezone(update: Update, context: ContextTypes.DEFAULT_TYPE
                 f"Heure locale : {local_time.strftime('%H:%M')} ({local_time.strftime('%d/%m/%Y')})\n\n"
                 f"Vos futures publications seront planifiées selon ce fuseau horaire.",
                 reply_markup=InlineKeyboardMarkup([[
-                    InlineKeyboardButton("↩️ Retour aux paramètres", callback_data="settings")
+                    InlineKeyboardButton("↩️ Back to Settings", callback_data="settings")
                 ]])
             )
         else:
@@ -2114,6 +2342,7 @@ async def handle_create_publication(update: Update, context: ContextTypes.DEFAUL
     user_id = update.effective_user.id
     
     try:
+        await query.answer()
         logger.info(f"handle_create_publication appelé par l'utilisateur {user_id}")
         
         # Load connected channels only (bot+user admins)
@@ -2191,7 +2420,7 @@ async def handle_create_publication(update: Update, context: ContextTypes.DEFAUL
             error_message = "❌ Une erreur est survenue lors de la récupération des canaux."
         
         keyboard = [
-            [InlineKeyboardButton("🔄 Réessayer", callback_data="create_publication")],
+            [InlineKeyboardButton("🔄 Retry", callback_data="create_publication")],
             [InlineKeyboardButton("↩️ Menu principal", callback_data="main_menu")]
         ]
         
@@ -2222,39 +2451,61 @@ async def planifier_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         with sqlite3.connect(settings.db_config["path"]) as conn:
             cursor = conn.cursor()
-            # Récupérer uniquement les posts en attente, avec une date planifiée, pour l'utilisateur courant
-            # et être compatible avec schémas 'type' legacy ou 'post_type' récent
-            cursor.execute(
-                """
+            # Détecter les colonnes présentes dans channels
+            cursor.execute("PRAGMA table_info(channels)")
+            ch_cols = [r[1] for r in cursor.fetchall()]
+            has_name = 'name' in ch_cols
+            has_title = 'title' in ch_cols
+            has_user_col = 'user_id' in ch_cols
+            # Détecter table channel_members
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='channel_members'")
+            has_members = cursor.fetchone() is not None
+
+            # Détecter les colonnes présentes dans posts pour éviter de référencer des colonnes inexistantes
+            cursor.execute("PRAGMA table_info(posts)")
+            p_cols = [r[1] for r in cursor.fetchall()]
+            has_post_type_col = 'post_type' in p_cols
+            has_legacy_type_col = 'type' in p_cols
+            if has_post_type_col and has_legacy_type_col:
+                post_type_expr = "COALESCE(NULLIF(p.post_type, ''), p.type) AS post_type"
+            elif has_post_type_col:
+                post_type_expr = "p.post_type AS post_type"
+            elif has_legacy_type_col:
+                post_type_expr = "p.type AS post_type"
+            else:
+                post_type_expr = "'' AS post_type"
+
+            # ✅ CORRECTION CRITIQUE : Éviter la jointure channels car les IDs ne correspondent pas
+            # Les posts contiennent channel_id = -1002225408564 (ID Telegram réel)
+            # Mais channels.id = 1,2,3... (clés primaires locales) 
+            # → La jointure échoue et aucun résultat n'est retourné
+            # Solution : récupérer les posts sans jointure
+            
+            sql = f"""
                 SELECT p.id,
-                       COALESCE(NULLIF(p.post_type, ''), p.type) AS post_type,
+                       {post_type_expr},
                        p.content,
                        p.caption,
                        p.scheduled_time,
-                       COALESCE(c.name, c.title) AS channel_name,
-                       c.username
+                       p.channel_id
                 FROM posts p
-                JOIN channels c ON p.channel_id = c.id
-                LEFT JOIN channel_members cm ON cm.channel_id = c.id
                 WHERE p.status = 'pending'
                   AND p.scheduled_time IS NOT NULL
-                  AND COALESCE(c.user_id, cm.user_id) = ?
                 ORDER BY p.scheduled_time
-                """,
-                (update.effective_user.id,)
-            )
+            """
+            cursor.execute(sql)
             scheduled_posts = cursor.fetchall()
 
         if not scheduled_posts:
             if update.callback_query:
                 await update.callback_query.edit_message_text(
-                    "❌ Aucun post planifié trouvé.",
+                    "❌ No scheduled posts found.",
                     reply_markup=InlineKeyboardMarkup([[
-                        InlineKeyboardButton("↩️ Menu principal", callback_data="main_menu")
+                        InlineKeyboardButton("↩️ Main menu", callback_data="main_menu")
                     ]])
                 )
             else:
-                await update.message.reply_text("❌ Aucun post planifié trouvé.")
+                await update.message.reply_text("❌ No scheduled posts found.")
             return MAIN_MENU
 
         # Filtrer par l'heure locale de l'utilisateur: ne montrer que les posts futurs
@@ -2295,14 +2546,32 @@ async def planifier_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await update.message.reply_text("❌ No scheduled posts found.")
             return MAIN_MENU
 
-        keyboard = []
-        message = "📅 Scheduled posts:\n\n"
+        # Résoudre les noms de canaux pour l'affichage 
+        with sqlite3.connect(settings.db_config["path"]) as conn2:
+            cursor2 = conn2.cursor()
+            
+            keyboard = []
+            message = "📅 Scheduled posts:\n\n"
 
-        for post in filtered_posts:
-            post_id, post_type, content, caption, scheduled_time, channel_name, channel_username = post
-            button_text = f"{scheduled_time} - {channel_name} (@{channel_username})"
-            keyboard.append([InlineKeyboardButton(button_text, callback_data=f"show_post_{post_id}")])
-            message += f"• {button_text}\n"
+            for post in filtered_posts:
+                # ✅ Nouvelle structure sans jointure : (post_id, post_type, content, caption, scheduled_time, channel_id)
+                post_id, post_type, content, caption, scheduled_time, channel_id = post
+                
+                # Résoudre le nom du canal à partir de channel_id
+                channel_name = f"Canal {channel_id}"  # Nom par défaut
+                
+                # Essayer de résoudre via la table channels
+                try:
+                    cursor2.execute("SELECT name, username FROM channels WHERE name IS NOT NULL LIMIT 1")
+                    ch_result = cursor2.fetchone()
+                    if ch_result:
+                        channel_name = ch_result[0] or f"Canal {channel_id}"
+                except:
+                    pass  # Utiliser la valeur par défaut
+                    
+                button_text = f"{scheduled_time} - {channel_name}"
+                keyboard.append([InlineKeyboardButton(button_text, callback_data=f"show_post_{post_id}")])
+                message += f"• {button_text}\n"
 
         keyboard.append([InlineKeyboardButton("↩️ Main menu", callback_data="main_menu")])
 
@@ -2344,11 +2613,11 @@ async def show_scheduled_post(update: Update, context: ContextTypes.DEFAULT_TYPE
 
         with sqlite3.connect(settings.db_config["path"]) as conn:
             cursor = conn.cursor()
+            # Récupérer directement les données du post sans jointure problématique
             cursor.execute("""
-                SELECT p.id, COALESCE(NULLIF(p.post_type, ''), p.type) AS type, p.content, p.caption, p.scheduled_time, COALESCE(c.name, c.title) AS channel_name, c.username
-                FROM posts p
-                JOIN channels c ON p.channel_id = c.id
-                WHERE p.id = ?
+                SELECT id, post_type, content, caption, scheduled_time, channel_id
+                FROM posts
+                WHERE id = ?
             """, (post_id,))
             post_data = cursor.fetchone()
 
@@ -2361,16 +2630,31 @@ async def show_scheduled_post(update: Update, context: ContextTypes.DEFAULT_TYPE
             )
             return MAIN_MENU
 
-        scheduled_time = datetime.strptime(post_data[4], '%Y-%m-%d %H:%M:%S')
+        # Décomposer les données du post
+        post_id, post_type, content, caption, scheduled_time_str, channel_id = post_data
+        scheduled_time = datetime.strptime(scheduled_time_str, '%Y-%m-%d %H:%M:%S')
+
+        # Résoudre le nom du canal depuis channel_id
+        channel_name = str(channel_id)  # Par défaut, utiliser l'ID
+        try:
+            # Essayer de récupérer des informations sur le canal si disponible
+            cursor.execute("SELECT username, title FROM channels WHERE id = ?", (channel_id,))
+            channel_info = cursor.fetchone()
+            if channel_info:
+                username, title = channel_info
+                channel_name = title or username or str(channel_id)
+        except:
+            # Si la requête échoue, utiliser l'ID du canal
+            pass
 
         post = {
-            'id': post_data[0],
-            'type': post_data[1],
-            'content': post_data[2],
-            'caption': post_data[3],
-            'scheduled_time': post_data[4],
-            'channel_name': post_data[5],
-            'channel_username': post_data[6],
+            'id': post_id,
+            'type': post_type,
+            'content': content,
+            'caption': caption,
+            'scheduled_time': scheduled_time_str,
+            'channel_name': channel_name,
+            'channel_id': channel_id,
             'scheduled_date': scheduled_time
         }
 
@@ -2384,35 +2668,45 @@ async def show_scheduled_post(update: Update, context: ContextTypes.DEFAULT_TYPE
         ]
 
         try:
+            # Nettoyer la caption pour éviter les erreurs de formatage
+            safe_caption = None
+            if post.get('caption'):
+                safe_caption = str(post['caption'])
+                # Supprimer les entités de formatage problématiques
+                safe_caption = safe_caption.replace('*', '').replace('_', '').replace('`', '').replace('[', '').replace(']', '')
+            
             if post['type'] == "photo":
                 await context.bot.send_photo(
                     chat_id=query.message.chat_id,
                     photo=post['content'],
-                    caption=post.get('caption'),
+                    caption=safe_caption,
                     reply_markup=None
                 )
             elif post['type'] == "video":
                 await context.bot.send_video(
                     chat_id=query.message.chat_id,
                     video=post['content'],
-                    caption=post.get('caption'),
+                    caption=safe_caption,
                     reply_markup=None
                 )
             elif post['type'] == "document":
                 await context.bot.send_document(
                     chat_id=query.message.chat_id,
                     document=post['content'],
-                    caption=post.get('caption'),
+                    caption=safe_caption,
                     reply_markup=None
                 )
             elif post['type'] == "text":
+                # Nettoyer le texte aussi
+                safe_text = str(post['content']).replace('*', '').replace('_', '').replace('`', '').replace('[', '').replace(']', '')
                 await context.bot.send_message(
                     chat_id=query.message.chat_id,
-                    text=post['content'],
+                    text=safe_text,
                     reply_markup=None
                 )
         except Exception as e:
             logger.error(f"Erreur lors de l'envoi du contenu : {e}")
+            # En cas d'erreur, on continue sans afficher le contenu
 
         # Récupérer le fuseau horaire de l'utilisateur
         user_id = update.effective_user.id
@@ -2424,13 +2718,17 @@ async def show_scheduled_post(update: Update, context: ContextTypes.DEFAULT_TYPE
         utc_time = scheduled_time.replace(tzinfo=pytz.UTC)
         local_time = utc_time.astimezone(local_tz)
 
+        # Sécuriser les chaînes pour éviter les problèmes de formatage
+        safe_channel_name = str(post.get('channel_name', 'Inconnu')).replace('_', '-').replace('*', '-').replace('`', '-')
+        safe_type = str(post.get('type', 'Inconnu')).replace('_', '-').replace('*', '-').replace('`', '-')
+        
         message = (
             f"📝 Scheduled post:\n\n"
             f"📅 Date: {local_time.strftime('%d/%m/%Y')}\n"
             f"⏰ Time: {local_time.strftime('%H:%M')} ({user_timezone})\n"
             f"🌐 UTC time: {scheduled_time.strftime('%H:%M')}\n"
-            f"📍 Channel: {post['channel_name']}\n"
-            f"📎 Type: {post['type']}\n"
+            f"📍 Channel: {safe_channel_name}\n"
+            f"📎 Type: {safe_type}\n"
         )
 
         await query.message.reply_text(
@@ -2457,6 +2755,7 @@ async def show_edit_file_menu(update: Update, context: ContextTypes.DEFAULT_TYPE
     user_id = update.effective_user.id
     
     try:
+        await query.answer()
         # Vérifier que le post existe
         if 'posts' not in context.user_data or post_index >= len(context.user_data['posts']):
             from utils.message_utils import safe_edit_message_text
@@ -2474,8 +2773,7 @@ async def show_edit_file_menu(update: Update, context: ContextTypes.DEFAULT_TYPE
         # Menu d'édition exactement comme dans l'image
         keyboard = [
             [InlineKeyboardButton("✏️ Rename", callback_data=f"rename_post_{post_index}")],
-            [InlineKeyboardButton("🖼️ Add Thumbnail", callback_data=f"add_thumbnail_{post_index}")],
-            [InlineKeyboardButton("🖼️ Add Thumbnail + Rename", callback_data=f"add_thumb_{post_index}")]
+
         ]
         
         from utils.message_utils import safe_edit_message_text
@@ -2561,85 +2859,7 @@ async def handle_rename_post(update: Update, context: ContextTypes.DEFAULT_TYPE,
         return MAIN_MENU
 
 
-async def handle_add_thumbnail_to_post_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, post_index: int) -> int:
-    """Ajoute un thumbnail à un post via callback"""
-    query = update.callback_query
-    
-    try:
-        # Envoyer un message de progression immédiat
-        progress = await context.bot.send_message(
-            chat_id=query.message.chat_id,
-            text=f"⏳ Traitement du post {post_index + 1}… Téléchargement en cours…"
-        )
-        # Supprimer le message du menu 'Edit File' pour nettoyer l'UI
-        try:
-            await context.bot.delete_message(chat_id=query.message.chat_id, message_id=query.message.message_id)
-        except Exception:
-            pass
-        # Stocker l'ID du message actuel pour le supprimer plus tard (legacy)
-        context.user_data['thumbnail_prompt_message_id'] = query.message.message_id
-        
-        # Utiliser la nouvelle fonction centralisée pour tout le traitement
-        logger.info(f"🎯 handle_add_thumbnail_to_post_callback appelé pour post {post_index + 1}")
-        
-        # Préparer le renommage à partir de la légende et forcer l'envoi en document
-        try:
-            post = context.user_data.get('posts', [])[post_index]
-            context.user_data['force_document_for_video'] = True
-            original_filename = post.get('filename')
-            caption_text = (post.get('caption') or "").strip()
-            if caption_text:
-                # Aplatis et nettoie la légende, enlève les @mentions
-                import re, os
-                flat_caption = " ".join(caption_text.splitlines()).strip()
-                flat_caption = re.sub(r'(?:(?<=\s)|^)(@[A-Za-z0-9_]{5,32})\b', ' ', flat_caption)
-                flat_caption = re.sub(r'\s+', ' ', flat_caption).strip()
-                flat_caption = flat_caption.replace('/', '-').replace('\\', '-').replace(':', '-')
-                ext = os.path.splitext(original_filename or "")[1]
-                if not ext and (post.get('type') == 'video'):
-                    ext = ".mp4"
-                new_name = flat_caption or (original_filename or f"file_{post_index}")
-                if ext and not new_name.lower().endswith(ext.lower()):
-                    new_name = f"{new_name}{ext}"
-                context.user_data['pending_rename_filename'] = new_name
-            else:
-                context.user_data.pop('pending_rename_filename', None)
-        except Exception as prep_err:
-            logger.warning(f"Préparation Add Thumbnail (rename/force doc) ignorée: {prep_err}")
-        
-        # Appeler la fonction centralisée qui fait tout le travail
-        success = await process_thumbnail_and_upload(update, context, post_index)
-        
-        if success:
-            logger.info(f"✅ Traitement thumbnail réussi pour post {post_index + 1}")
-            # Supprimer le message de progression
-            try:
-                await context.bot.delete_message(chat_id=progress.chat_id, message_id=progress.message_id)
-            except Exception:
-                pass
-            return WAITING_PUBLICATION_CONTENT
-        else:
-            logger.error(f"❌ Échec du traitement thumbnail pour post {post_index + 1}")
-            try:
-                await context.bot.edit_message_text(chat_id=progress.chat_id, message_id=progress.message_id, text="❌ Erreur lors du traitement.")
-            except Exception:
-                pass
-            return MAIN_MENU
-            
-    except Exception as e:
-        logger.error(f"Erreur dans handle_add_thumbnail_to_post_callback: {e}")
-        try:
-            await context.bot.send_message(chat_id=query.message.chat_id, text="❌ Une erreur est survenue lors de l'ajout du thumbnail.")
-        except Exception:
-            pass
-        await safe_edit_callback_message(
-            query,
-            "❌ Une erreur est survenue lors de l'ajout du thumbnail.",
-            reply_markup=InlineKeyboardMarkup([[
-                InlineKeyboardButton("↩️ Menu principal", callback_data="main_menu")
-            ]])
-        )
-        return MAIN_MENU
+
 
 
 
@@ -2818,14 +3038,28 @@ async def send_post_now(update, context, scheduled_post=None):
             logger.debug(f"Client diagnostic check failed: {diagnostic_error}")
         
         if scheduled_post:
-            posts = [scheduled_post]
-            channel = scheduled_post.get('channel', '@default_channel')  # Correction: canal par défaut fixe
+            # Mode post planifié : récupérer les données depuis la base
+            logger.info(f"📋 Mode envoi immédiat d'un post planifié (ID: {scheduled_post.get('id')})")
+            
+            # Créer un pseudo-post depuis les données planifiées
+            post_data = {
+                'type': scheduled_post.get('type'),
+                'content': scheduled_post.get('content'),
+                'caption': scheduled_post.get('caption'),
+                'file_path': scheduled_post.get('content')  # Le content contient le chemin du fichier
+            }
+            
+            posts = [post_data]
+            channel_id = scheduled_post.get('channel_id')
+            
         else:
+            # Mode nouveau post : utiliser les données du contexte
             posts = context.user_data.get("posts", [])
             # logger.debug(f"Posts to send: {len(posts)}")
             
             if not posts:
                 # No posts to send
+                logger.warning("❌ Aucun post à envoyer (ni nouveau ni planifié)")
                 if update.message:
                     await update.message.reply_text(
                         "❌ Il n'y a pas de fichiers à envoyer.",
@@ -2842,9 +3076,41 @@ async def send_post_now(update, context, scheduled_post=None):
                     )
                 return MAIN_MENU
             
-            # Récupérer le canal du premier post ou du canal sélectionné
+            # ✅ VALIDATION DU CANAL - Vérifier qu'un canal valide est sélectionné
             selected_channel = context.user_data.get('selected_channel', {})
-            channel = posts[0].get("channel") or selected_channel.get('username', '@default_channel')
+            channel = selected_channel.get('username') or selected_channel.get('channel_id')
+        
+        # Pour les posts planifiés, on utilise le channel_id du post
+        if scheduled_post:
+            channel = channel_id  # Utiliser l'ID du canal du post planifié
+        
+        if not channel or channel == '@default_channel':
+            logger.warning(f"⚠️ No valid channel selected for posts. Selected: {selected_channel}")
+            if update.message:
+                await update.message.reply_text(
+                    "⚠️ **Aucun canal n'est sélectionné pour ce post.**\n\n"
+                    "👉 Veuillez d'abord sélectionner un canal, puis réessayez.",
+                    reply_markup=InlineKeyboardMarkup([
+                        [InlineKeyboardButton("📺 Choisir un canal", callback_data="choose_channel")],
+                        [InlineKeyboardButton("↩️ Menu principal", callback_data="main_menu")]
+                    ])
+                )
+            elif hasattr(update, 'callback_query') and update.callback_query:
+                await update.callback_query.message.reply_text(
+                    "⚠️ **Aucun canal n'est sélectionné pour ce post.**\n\n"
+                    "👉 Veuillez d'abord sélectionner un canal, puis réessayez.",
+                    reply_markup=InlineKeyboardMarkup([
+                        [InlineKeyboardButton("📺 Choisir un canal", callback_data="choose_channel")],
+                        [InlineKeyboardButton("↩️ Menu principal", callback_data="main_menu")]
+                    ])
+                )
+            return MAIN_MENU
+        
+        # Si pas de post planifié, récupérer le canal du premier post ou du canal sélectionné  
+        if not scheduled_post:
+            selected_channel = context.user_data.get('selected_channel', {})
+            if not channel:  # Si pas de canal défini plus haut
+                channel = posts[0].get("channel") or selected_channel.get('username', '@default_channel')
 
         # logger.debug(f"Target channel: {channel}")
 
@@ -2920,6 +3186,10 @@ async def send_post_now(update, context, scheduled_post=None):
 
             # === Build inline keyboard (reactions + URL buttons) ===
             keyboard = []
+            
+            # Générer un post_id unique basé sur le timestamp et l'index
+            import time
+            post_id = int(time.time() * 1000) + post_index  # Timestamp millisecondes + index
 
             # Reactions (can be list or JSON string)
             reactions = post.get('reactions')
@@ -2946,14 +3216,10 @@ async def send_post_now(update, context, scheduled_post=None):
                         else:
                             normalized_reactions.append(r)
 
-                    row = []
-                    for reaction in normalized_reactions:
-                        row.append(InlineKeyboardButton(reaction, callback_data=f"react_{post_index}_{reaction}"))
-                        if len(row) == 4:
-                            keyboard.append(row)
-                            row = []
-                    if row:
-                        keyboard.append(row)
+                    # NOUVEAU SYSTÈME : Utiliser le nouveau build_react_keyboard
+                    from handlers.reaction_system import build_react_keyboard
+                    reactions_keyboard = build_react_keyboard(normalized_reactions, post_id)
+                    keyboard.extend(reactions_keyboard.inline_keyboard)
             except Exception as e:
                 logger.warning(f"Reaction keyboard build error: {e}")
 
@@ -3010,6 +3276,13 @@ async def send_post_now(update, context, scheduled_post=None):
                     if sent_message:
                         logger.info(f"✅ Envoi réussi du post {post_index + 1} avec thumbnail personnalisé")
                         success_count += 1
+                        
+                        # NOUVEAU SYSTÈME : Sauvegarder le mapping post_id -> message
+                        if reactions:  # Seulement si le post a des réactions
+                            from handlers.reaction_system import save_post_mapping
+                            save_post_mapping(post_id, channel_to_send, sent_message.message_id)
+                            logger.debug(f"📍 Mapping sauvé: post_id={post_id} → msg_id={sent_message.message_id}")
+                        
                         # Programmer l'auto-destruction si configurée
                         if auto_destruction_time and auto_destruction_time > 0:
                             schedule_auto_destruction(context, channel_to_send, sent_message.message_id, auto_destruction_time)
@@ -3038,6 +3311,13 @@ async def send_post_now(update, context, scheduled_post=None):
                         sent_message = await try_send_with_retry(do_send, f"texte #{post_index+1}")
                     if sent_message:
                         success_count += 1
+                        
+                        # NOUVEAU SYSTÈME : Sauvegarder le mapping post_id -> message  
+                        if reactions:  # Seulement si le post a des réactions
+                            from handlers.reaction_system import save_post_mapping
+                            save_post_mapping(post_id, channel_to_send, sent_message.message_id)
+                            logger.debug(f"📍 Mapping sauvé: post_id={post_id} → msg_id={sent_message.message_id}")
+                        
                         if auto_destruction_time and auto_destruction_time > 0:
                             schedule_auto_destruction(context, channel_to_send, sent_message.message_id, auto_destruction_time)
                 except Exception as e:
@@ -3053,9 +3333,40 @@ async def send_post_now(update, context, scheduled_post=None):
         # Nettoyage et petit repos anti-flood avant le message de succès
         context.user_data['posts'] = []
         context.user_data.pop('selected_channel', None)
+        
+        # Si c'était un post planifié, le supprimer de la base et annuler le job
+        if scheduled_post and scheduled_post.get('id'):
+            try:
+                post_id = scheduled_post.get('id')
+                logger.info(f"🗑️ Suppression du post planifié ID {post_id} après envoi immédiat")
+                
+                # Supprimer de la base de données
+                import sqlite3
+                from config import settings
+                with sqlite3.connect(settings.db_config["path"]) as conn:
+                    cursor = conn.cursor()
+                    cursor.execute("DELETE FROM posts WHERE id = ?", (post_id,))
+                    conn.commit()
+                    
+                # Annuler le job planifié s'il existe
+                scheduler_manager = get_scheduler_manager()
+                if scheduler_manager:
+                    job_id = f"post_{post_id}"
+                    if scheduler_manager.scheduler.get_job(job_id):
+                        scheduler_manager.scheduler.remove_job(job_id)
+                        logger.info(f"✅ Job planifié {job_id} annulé")
+                
+                # Nettoyer le contexte
+                context.user_data.pop('current_scheduled_post', None)
+                context.user_data.pop('editing_post_id', None)
+                
+                logger.info(f"✅ Post planifié ID {post_id} supprimé avec succès après envoi immédiat")
+                
+            except Exception as cleanup_error:
+                logger.error(f"❌ Erreur lors du nettoyage du post planifié: {cleanup_error}")
 
-        # Message de confirmation récapitulatif
-        success_message = f"✅ **Envoi réussi !**\n\n{success_count} post(s) envoyé(s) vers {channel_label}"
+        # Message de confirmation récapitulatif (éviter les entités markdown problématiques)
+        success_message = f"✅ Envoi réussi !\n\n{success_count} post(s) envoyé(s) vers {channel_label}"
 
         # Ajouter info auto-destruction si configurée
         if auto_destruction_time and auto_destruction_time > 0:
@@ -3065,23 +3376,21 @@ async def send_post_now(update, context, scheduled_post=None):
                 time_str = f"{auto_destruction_time // 3600} heure(s)"
             else:
                 time_str = f"{auto_destruction_time // 86400} jour(s)"
-            success_message += f"\n\n⏰ **Auto-destruction activée** : {time_str}"
+            success_message += f"\n\n⏰ Auto-destruction activée : {time_str}"
 
         if update.message:
             await update.message.reply_text(
                 success_message,
                 reply_markup=InlineKeyboardMarkup([[ 
                     InlineKeyboardButton("↩️ Menu principal", callback_data="main_menu")
-                ]]),
-                parse_mode='Markdown'
+                ]])
             )
         elif hasattr(update, 'callback_query') and update.callback_query:
             await update.callback_query.message.reply_text(
                 success_message,
                 reply_markup=InlineKeyboardMarkup([[ 
                     InlineKeyboardButton("↩️ Menu principal", callback_data="main_menu")
-                ]]),
-                parse_mode='Markdown'
+                ]])
             )
 
         logger.info("✅ === FIN send_post_now - SUCCÈS ===")
@@ -3123,8 +3432,21 @@ async def handle_send_scheduled_post(update: Update, context: ContextTypes.DEFAU
             try:
                 with sqlite3.connect(settings.db_config["path"]) as conn:
                     cursor = conn.cursor()
-                    cursor.execute("""
-                        SELECT c.username, COALESCE(c.name, c.title) AS name
+                    # Build schema-aware channel name expression
+                    cursor.execute("PRAGMA table_info(channels)")
+                    _cols = [r[1] for r in cursor.fetchall()]
+                    _has_name = 'name' in _cols
+                    _has_title = 'title' in _cols
+                    if _has_name and _has_title:
+                        _name_expr = "COALESCE(c.name, c.title) AS name"
+                    elif _has_name:
+                        _name_expr = "c.name AS name"
+                    elif _has_title:
+                        _name_expr = "c.title AS name"
+                    else:
+                        _name_expr = "c.username AS name"
+                    cursor.execute(f"""
+                        SELECT c.username, {_name_expr}
                         FROM posts p
                         JOIN channels c ON p.channel_id = c.id
                         WHERE p.id = ?
@@ -3357,21 +3679,57 @@ async def handle_send_normal_posts(update: Update, context: ContextTypes.DEFAULT
         
         logger.info(f"📍 Envoi vers le canal: {channel}")
         
-        sent_count = 0
-        for post_index, post in enumerate(posts):
-            try:
-                post_type = post.get('type')
-                content = post.get('content')
-                caption = post.get('caption', '')
+        # Grouper les médias par type pour l'envoi groupé
+        media_groups = []
+        current_group = []
+        current_group_size = 0
+        
+        # Préparer les groupes de médias
+        for post in posts:
+            post_type = post.get('type')
+            content = post.get('content')
+            
+            # Vérifier si le type de média est compatible avec les groupes de médias
+            if post_type not in ['photo', 'video', 'document']:
+                # Si le type n'est pas compatible, créer un nouveau groupe pour ce post
+                if current_group:
+                    media_groups.append(current_group)
+                    current_group = []
+                    current_group_size = 0
+                media_groups.append([post])
+                continue
                 
-                # ✅ VALIDATION DU CONTENU
-                if not content:
-                    logger.warning(f"Post {post_index + 1} ignoré: contenu manquant")
-                    continue
+            # Vérifier la taille du fichier
+            file_size = post.get('file_size', 0)
+            if current_group_size + file_size > MAX_MEDIA_GROUP_SIZE or len(current_group) >= MAX_FILES_PER_MEDIA_GROUP:
+                if current_group:
+                    media_groups.append(current_group)
+                    current_group = []
+                    current_group_size = 0
                     
-                if not post_type:
-                    logger.warning(f"Post {post_index + 1} ignoré: type manquant")
-                    continue
+            current_group.append(post)
+            current_group_size += file_size
+            
+        # Ajouter le dernier groupe s'il n'est pas vide
+        if current_group:
+            media_groups.append(current_group)
+            
+        logger.info(f"📦 {len(media_groups)} groupe(s) de médias créé(s) pour l'envoi")
+        
+        # Envoyer chaque groupe
+        sent_count = 0
+        for group_index, group in enumerate(media_groups, 1):
+            try:
+                # Si le groupe ne contient qu'un seul post, l'envoyer normalement
+                if len(group) == 1:
+                    post = group[0]
+                    post_type = post.get('type')
+                    content = post.get('content')
+                    caption = post.get('caption', '')
+                    
+                    if not content or not post_type:
+                        logger.warning(f"Post ignoré: contenu ou type manquant")
+                        continue
                 
                 logger.info(f"📤 Envoi du post {post_index + 1}/{len(posts)} - Type: {post_type}")
                 
@@ -3408,7 +3766,7 @@ async def handle_send_normal_posts(update: Update, context: ContextTypes.DEFAULT
                             logger.info(f" Ajout réaction: {reaction}")
                             current_row.append(InlineKeyboardButton(
                                 reaction,
-                                callback_data=f"react_{post_index}_{reaction}"
+                                callback_data=f"r:{reaction}:{post_index}"
                             ))
                             # 4 réactions par ligne maximum
                             if len(current_row) == 4:
@@ -3446,39 +3804,100 @@ async def handle_send_normal_posts(update: Update, context: ContextTypes.DEFAULT
                 if reply_markup:
                     logger.info(f"🎯 Contenu du reply_markup: {reply_markup.inline_keyboard}")
                 
-                sent_message = None
-                logger.info(f"📤 Envoi vers {channel} avec reply_markup: {reply_markup is not None}")
-                
-                if post_type == "photo":
-                    sent_message = await context.bot.send_photo(
-                        chat_id=channel,
-                        photo=content,
-                        caption=caption,
-                        reply_markup=reply_markup
-                    )
-                elif post_type == "video":
-                    sent_message = await context.bot.send_video(
-                        chat_id=channel,
-                        video=content,
-                        caption=caption,
-                        reply_markup=reply_markup
-                    )
-                elif post_type == "document":
-                    sent_message = await context.bot.send_document(
-                        chat_id=channel,
-                        document=content,
-                        caption=caption,
-                        reply_markup=reply_markup
-                    )
-                elif post_type == "text":
-                    sent_message = await context.bot.send_message(
-                        chat_id=channel,
-                        text=content,
-                        reply_markup=reply_markup
-                    )
+                    # Construire le clavier pour ce post
+                    keyboard = _build_keyboard_for_post(post, group_index-1)  # group_index-1 car on commence à 1 dans la boucle
+                    reply_markup = InlineKeyboardMarkup(keyboard) if keyboard else None
+                    
+                    logger.info(f"📤 Envoi d'un post unique vers {channel}")
+                    
+                    sent_message = None
+                    if post_type == "photo":
+                        sent_message = await context.bot.send_photo(
+                            chat_id=channel,
+                            photo=content,
+                            caption=caption,
+                            reply_markup=reply_markup
+                        )
+                    elif post_type == "video":
+                        sent_message = await context.bot.send_video(
+                            chat_id=channel,
+                            video=content,
+                            caption=caption,
+                            reply_markup=reply_markup
+                        )
+                    elif post_type == "document":
+                        sent_message = await context.bot.send_document(
+                            chat_id=channel,
+                            document=content,
+                            caption=caption,
+                            reply_markup=reply_markup
+                        )
+                    elif post_type == "text":
+                        sent_message = await context.bot.send_message(
+                            chat_id=channel,
+                            text=content,
+                            reply_markup=reply_markup
+                        )
+                    else:
+                        logger.warning(f"Type de post non supporté: {post_type}")
+                        continue
+                        
+                    if sent_message:
+                        sent_count += 1
+                        # Programmer l'auto-destruction si configurée
+                        if auto_destruction_time > 0:
+                            schedule_auto_destruction(context, channel, sent_message.message_id, auto_destruction_time)
+                            
                 else:
-                    logger.warning(f"Type de post non supporté: {post_type}")
-                    continue
+                    # Envoyer le groupe de médias
+                    logger.info(f"📤 Envoi d'un groupe de {len(group)} médias vers {channel}")
+                    
+                    # Préparer le tableau de médias pour l'API
+                    media_array = []
+                    for i, post in enumerate(group):
+                        post_type = post.get('type')
+                        content = post.get('content')
+                        caption = post.get('caption', '') if i == 0 else ''  # Seul le premier média peut avoir une légende
+                        
+                        media = {
+                            'type': post_type,
+                            'media': content
+                        }
+                        
+                        if i == 0:  # Ajouter la légende uniquement au premier média
+                            media['caption'] = caption
+                            
+                        media_array.append(media)
+                    
+                    # Envoyer le groupe de médias en sous-groupes de 10 (limite API Telegram)
+                    sent_messages = []
+                    BATCH_LIMIT = 10
+                    for i in range(0, len(media_array), BATCH_LIMIT):
+                        sub_batch = media_array[i:i+BATCH_LIMIT]
+                        try:
+                            result = await context.bot.send_media_group(
+                                chat_id=channel,
+                                media=sub_batch
+                            )
+                            if result:
+                                sent_messages.extend(result)
+                        except Exception as e:
+                            logger.error(f"❌ Erreur lors de l'envoi du sous-groupe ({i//BATCH_LIMIT+1}): {e}")
+                            continue
+                        # Délai léger entre sous-groupes pour éviter le flood
+                        if i + BATCH_LIMIT < len(media_array):
+                            await asyncio.sleep(DELAY_BETWEEN_GROUPS)
+                    
+                    if sent_messages:
+                        sent_count += len(sent_messages)
+                        # Programmer l'auto-destruction pour tous les messages du groupe
+                        if auto_destruction_time > 0:
+                            for msg in sent_messages:
+                                schedule_auto_destruction(context, channel, msg.message_id, auto_destruction_time)
+                    
+                    # Ajouter un délai entre les groupes pour éviter le flood
+                    if group_index < len(media_groups):
+                        await asyncio.sleep(DELAY_BETWEEN_GROUPS)
                 
                 if sent_message:
                     sent_count += 1
@@ -3538,206 +3957,12 @@ async def handle_send_normal_posts(update: Update, context: ContextTypes.DEFAULT
 # Fin du fichier - Ancienne fonction send_post_now dupliquée supprimée
 # La fonction send_post_now complète est définie plus haut dans le fichier (ligne 1760)
 
+# Fonction supprimée - thumbnails non supportés
 async def process_thumbnail_and_upload(update: Update, context: ContextTypes.DEFAULT_TYPE, post_index: int) -> bool:
     """
-    Fonction centralisée pour traiter l'ajout de thumbnail ET le renommage à un post.
+    Fonction désactivée - thumbnails supprimés
     """
-    query = update.callback_query
-    user_id = update.effective_user.id
-    temp_files = []
-        
-    try:
-        # Récupérer le post et ses infos
-        if 'posts' not in context.user_data or post_index >= len(context.user_data['posts']):
-            logger.error("❌ Post introuvable dans le contexte")
-            return False
-            
-        post = context.user_data['posts'][post_index]
-        post_type = post.get('type')
-        content = post.get('content')
-        caption = post.get('caption', '')
-        
-        # IMPORTANT: Récupérer le nouveau nom s'il existe
-        new_filename = context.user_data.get('pending_rename_filename')
-        if not new_filename:
-            new_filename = post.get('filename', f"file_{post_index}")
-        # Sécuriser l'extension pour les vidéos afin d'assurer la lecture inline
-        try:
-            if post.get('type') == 'video':
-                original_ext = os.path.splitext(post.get('filename') or "")[1]
-                if not original_ext:
-                    original_ext = ".mp4"
-                if not new_filename.lower().endswith(original_ext.lower()):
-                    new_filename += original_ext
-        except Exception:
-            pass
-            
-        # Récupérer le canal et le thumbnail
-        channel_username = post.get('channel', context.user_data.get('selected_channel', {}).get('username'))
-        clean_username = normalize_channel_username(channel_username)
-        
-        # Récupérer le thumbnail
-        db_manager = DatabaseManager()
-        thumbnail_data = db_manager.get_thumbnail(clean_username, user_id)
-        
-        if not thumbnail_data:
-            logger.error(f"❌ Aucun thumbnail trouvé pour @{clean_username}")
-            return False
-        
-        # Récupérer ou télécharger le fichier original (robuste)
-        file_path = None
-        local_path = post.get('local_path')
-        if local_path and os.path.exists(local_path) and os.path.isfile(local_path) and os.path.getsize(local_path) > 0 and os.access(local_path, os.R_OK):
-            file_path = local_path
-        else:
-            try:
-                # Tentative Bot API (rapide, mais limité)
-                file_obj = await context.bot.get_file(content)
-                file_path = await file_obj.download_to_drive()
-                if not file_path or not os.path.exists(file_path) or os.path.getsize(file_path) == 0:
-                    raise Exception("Fichier téléchargé invalide via API Bot")
-                temp_files.append(file_path)
-            except Exception as e:
-                err = str(e)
-                # Fallback vers Pyrogram pour gros fichiers ou références expirées
-                if ("File is too big" in err or "file is too big" in err.lower() or
-                    "FILE_REFERENCE_EXPIRED" in err or "file reference" in err.lower()):
-                    from utils.clients import client_manager
-                    client_info = await client_manager.get_best_client(100*1024*1024, "download")
-                    client = client_info["client"]
-                    import time
-                    file_path = await client.download_media(content, file_name=f"temp_{user_id}_{int(time.time())}")
-                    if not file_path or not os.path.exists(file_path) or os.path.getsize(file_path) == 0:
-                        raise Exception("Fichier téléchargé invalide via client avancé")
-                    temp_files.append(file_path)
-                else:
-                    raise
-        
-        # Préparer le thumbnail avec fallback fiable (chemin local si valide, sinon file_id)
-        if isinstance(thumbnail_data, dict):
-            local_thumb_path = thumbnail_data.get('local_path')
-            file_id_thumb = thumbnail_data.get('file_id')
-            thumb_to_use = local_thumb_path if (local_thumb_path and os.path.exists(local_thumb_path)) else file_id_thumb
-        else:
-            thumb_to_use = thumbnail_data
-        
-        # IMPORTANT: Utiliser send_file_smart avec le nouveau nom
-        from .media_handler import send_file_smart
-        
-        # Forcer l'envoi en document pour la vidéo si demandé (cas Add Thumbnail + Rename)
-        # OU pour tous les types si force_document_for_video est True (cas Add Thumbnail simple)
-        force_doc = (post_type == "document") or (bool(context.user_data.get('force_document_for_video')))
-
-        # Pour remplacer la légende par le nom de fichier, on définit la caption au nouveau nom
-        # et on ajoute le tag du canal sur la même ligne si disponible
-        name_caption = f"{new_filename}"
-        try:
-            db_mgr_for_tag = db_manager if 'db_manager' in locals() else DatabaseManager()
-            tag = db_mgr_for_tag.get_channel_tag(clean_username, user_id)
-            if tag and str(tag).strip():
-                name_caption = f"{new_filename} {str(tag).strip()}"
-        except Exception:
-            pass
-
-        result = await send_file_smart(
-            chat_id=update.effective_user.id,
-            file_path=file_path,
-            caption=name_caption,
-            thumb_id=thumb_to_use,
-            file_name=new_filename,
-            force_document=force_doc,
-            context=context,
-            progress_chat_id=update.effective_chat.id,
-            progress_prefix=f"Post {post_index + 1}: "
-        )
-        
-        if result["success"]:
-            new_file_id = result.get("file_id")
-            if new_file_id:
-                # Mettre à jour le post avec le nouveau file_id et le nouveau nom
-                post['content'] = new_file_id
-                post['has_custom_thumbnail'] = True
-                post['filename'] = new_filename  # Sauvegarder le nouveau nom
-                post['original_file_id'] = content
-                # Si on a forcé un envoi en document, aligner le type
-                if force_doc:
-                    post['type'] = 'document'
-                
-                # Supprimer le message brut renvoyé par send_file_smart
-                msg_id = result.get("message_id")
-                if msg_id:
-                    try:
-                        await context.bot.delete_message(chat_id=update.effective_user.id, message_id=msg_id)
-                    except Exception:
-                        pass
-
-                # Supprimer l'ancien message d'aperçu si présent
-                prev = context.user_data.get('preview_messages', {}).get(post_index)
-                if prev:
-                    try:
-                        await context.bot.delete_message(chat_id=prev['chat_id'], message_id=prev['message_id'])
-                    except Exception:
-                        pass
-
-                # Construire les boutons essentiels
-                buttons = [
-                    [InlineKeyboardButton("✨ Ajouter des réactions", callback_data=f"add_reactions_{post_index}")],
-                    [InlineKeyboardButton("🔗 Ajouter un bouton URL", callback_data=f"add_url_button_{post_index}")],
-                    [InlineKeyboardButton("✏️ Edit File", callback_data=f"edit_file_{post_index}")],
-                    [InlineKeyboardButton("❌ Supprimer", callback_data=f"delete_post_{post_index}")]
-                ]
-                reply_markup = InlineKeyboardMarkup(buttons)
-
-                # Réenvoyer le média final avec boutons, SANS légende
-                sent_message = None
-                final_type = post.get('type') or post_type
-                if final_type == 'photo':
-                    sent_message = await context.bot.send_photo(update.effective_chat.id, new_file_id, caption=name_caption, reply_markup=reply_markup)
-                elif final_type == 'video':
-                    sent_message = await context.bot.send_video(update.effective_chat.id, new_file_id, caption=name_caption, reply_markup=reply_markup)
-                elif final_type == 'document':
-                    sent_message = await context.bot.send_document(update.effective_chat.id, new_file_id, caption=name_caption, reply_markup=reply_markup)
-
-                # Enregistrer le nouvel aperçu
-                if sent_message:
-                    if 'preview_messages' not in context.user_data:
-                        context.user_data['preview_messages'] = {}
-                    context.user_data['preview_messages'][post_index] = {
-                        'message_id': sent_message.message_id,
-                        'chat_id': update.effective_chat.id
-                    }
-
-                # Nettoyer le contexte
-                context.user_data.pop('pending_rename_filename', None)
-                context.user_data.pop('awaiting_thumb_rename', None)
-                context.user_data.pop('force_document_for_video', None)
-
-                # Supprimer le message de progression s'il existe
-                try:
-                    pmid = context.user_data.pop('progress_message_id', None)
-                    if pmid:
-                        await context.bot.delete_message(update.effective_chat.id, pmid)
-                except Exception:
-                    pass
-
-                logger.info(f"✅ Post {post_index + 1} mis à jour avec thumbnail")
-                return True
-                
-        return False
-            
-    except Exception as e:
-        logger.error(f"❌ Erreur dans process_thumbnail_and_upload: {e}")
-        return False
-    finally:
-        # Nettoyer les fichiers temporaires
-        for temp_file in temp_files:
-            try:
-                if os.path.exists(temp_file):
-                    os.remove(temp_file)
-            except:
-                pass
-
-
+    return False
 async def handle_language_settings(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Gère les paramètres de langue"""
     query = update.callback_query

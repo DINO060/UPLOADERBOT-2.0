@@ -253,6 +253,66 @@ class SchedulerManager:
                 'func': job.func.__name__ if callable(job.func) else str(job.func)
             })
         return tasks
+    
+    async def cleanup_orphaned_post_jobs(self, db_path: str = "bot.db") -> int:
+        """
+        Nettoie les tâches planifiées pour les posts qui n'existent plus en DB
+        
+        Args:
+            db_path: Chemin vers la base de données
+            
+        Returns:
+            int: Nombre de tâches supprimées
+        """
+        try:
+            import sqlite3
+            
+            # Récupérer tous les IDs de posts existants
+            with sqlite3.connect(db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute('SELECT id FROM posts')
+                existing_post_ids = {str(row[0]) for row in cursor.fetchall()}
+            
+            removed_count = 0
+            jobs_to_remove = []
+            
+            # Vérifier tous les jobs planifiés
+            for job in self.scheduler.get_jobs():
+                job_id = job.id
+                
+                # Vérifier si c'est un job de post (format: "post_<id>" ou contient un ID de post)
+                if job_id.startswith('post_'):
+                    post_id = job_id.replace('post_', '')
+                    if post_id not in existing_post_ids:
+                        jobs_to_remove.append(job_id)
+                        logger.info(f"🧹 Job orphelin détecté: {job_id} (post {post_id} n'existe plus)")
+                elif job_id.isdigit():
+                    # Job avec ID numérique direct
+                    if job_id not in existing_post_ids:
+                        jobs_to_remove.append(job_id)
+                        logger.info(f"🧹 Job orphelin détecté: {job_id} (post n'existe plus)")
+            
+            # Supprimer les jobs orphelins
+            for job_id in jobs_to_remove:
+                try:
+                    self.scheduler.remove_job(job_id)
+                    removed_count += 1
+                    logger.info(f"✅ Job orphelin supprimé: {job_id}")
+                except JobLookupError:
+                    logger.warning(f"⚠️ Job {job_id} déjà supprimé")
+                except Exception as e:
+                    logger.error(f"❌ Erreur lors de la suppression du job {job_id}: {e}")
+            
+            if removed_count > 0:
+                logger.info(f"🧹 Nettoyage terminé: {removed_count} job(s) orphelin(s) supprimé(s)")
+            else:
+                logger.info("✅ Aucun job orphelin trouvé")
+                
+            return removed_count
+            
+        except Exception as e:
+            logger.error(f"❌ Erreur lors du nettoyage des jobs orphelins: {e}")
+            return 0
 
 # Ne pas créer d'instance globale ici pour éviter les conflits
 # L'instance principale est créée dans bot.py 

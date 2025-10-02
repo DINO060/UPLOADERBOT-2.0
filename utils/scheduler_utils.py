@@ -95,9 +95,17 @@ async def send_scheduled_file(post: Dict[str, Any], app: Optional[Application] =
             logger.error("❌ Telegram Application not found")
             logger.error("🔍 Available global variables:")
             logger.error(f"   _global_application: {_global_application}")
+            logger.error("🔍 Attempting to get scheduler manager...")
+            scheduler_manager = get_global_scheduler_manager()
+            if scheduler_manager:
+                logger.info(f"✅ Scheduler manager found: {scheduler_manager}")
+                logger.info(f"🔍 Scheduler running: {scheduler_manager.scheduler.running}")
+            else:
+                logger.error("❌ No scheduler manager found either")
             return False
 
         logger.info(f"✅ Telegram Application found: {type(app)}")
+        logger.info(f"🔍 Application bot_data keys: {list(app.bot_data.keys()) if hasattr(app, 'bot_data') else 'No bot_data'}")
 
         # ✅ VALIDATION DES DONNÉES DU POST
         post_id = post.get('id')
@@ -108,15 +116,48 @@ async def send_scheduled_file(post: Dict[str, Any], app: Optional[Application] =
         
         logger.info(f"📋 Post ID: {post_id}")
         
+        # ✅ VÉRIFICATION PRÉALABLE DE L'EXISTENCE DU POST
+        try:
+            from config import settings
+            db_path = settings.db_config.get("path", "bot.db")
+            with sqlite3.connect(db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT COUNT(*) FROM posts WHERE id = ?", (post_id,))
+                exists = cursor.fetchone()[0] > 0
+                
+                if not exists:
+                    logger.error(f"❌ Post {post_id} not found in database")
+                    logger.error(f"❌ This post was likely deleted or never existed")
+                    logger.info(f"🧹 Tentative de suppression du job orphelin post_{post_id}")
+                    
+                    # Essayer de supprimer le job du scheduler si possible
+                    try:
+                        from utils.scheduler_utils import get_global_scheduler_manager
+                        scheduler_manager = get_global_scheduler_manager()
+                        if scheduler_manager:
+                            try:
+                                scheduler_manager.scheduler.remove_job(f"post_{post_id}")
+                                logger.info(f"✅ Job orphelin post_{post_id} supprimé")
+                            except:
+                                pass  # Job n'existe pas ou déjà supprimé
+                    except:
+                        pass
+                    
+                    return False
+                    
+        except Exception as db_check_error:
+            logger.error(f"❌ Error checking post existence: {db_check_error}")
+            return False
+        
         # 📋 RÉCUPÉRER LES DONNÉES COMPLÈTES DEPUIS LA BASE DE DONNÉES
         try:
+            import os  # ✅ Import d'os au début
             logger.info("🔍 Fetching data from the database...")
             from config import settings
             db_path = settings.db_config.get("path", "bot.db")
-            logger.info(f"📁 DB Path: {db_path}")
+            logger.info(f"📁 DB Path: {os.path.abspath(db_path)}")  # ✅ Chemin absolu pour debug
             
             # Vérifier que le fichier DB existe
-            import os
             if not os.path.exists(db_path):
                 logger.error(f"❌ Database file not found: {db_path}")
                 return False
@@ -126,43 +167,107 @@ async def send_scheduled_file(post: Dict[str, Any], app: Optional[Application] =
             with sqlite3.connect(db_path) as conn:
                 cursor = conn.cursor()
                 
+                # ✅ RÉCUPÉRATION ROBUSTE AVEC VALIDATION STRICTE
+                cursor.execute("""
+                    SELECT p.id, p.post_type, p.content, p.caption, p.scheduled_time,
+                           p.channel_id, p.buttons, p.reactions, p.status
+                    FROM posts p 
+                    WHERE p.id = ?
+                """, (post_id,))
+                
+                result = cursor.fetchone()
+                
+                if not result:
+                    logger.error(f"❌ Post {post_id} not found in database")
+                    return False
+                
+                (db_post_id, post_type, content, caption, scheduled_time, 
+                 channel_id, buttons, reactions, status) = result
+                
+                # ✅ VALIDATION CRITIQUE du channel_id
+                if not channel_id:
+                    logger.error(f"❌ Post {post_id} has NULL channel_id")
+                    cursor.execute("UPDATE posts SET status = ? WHERE id = ?", ('missing_channel', post_id))
+                    conn.commit()
+                    return False
+                
+                # ✅ RÉSOLUTION DU CHAT avec fallback
+                try:
+                    if isinstance(channel_id, int):
+                        # Channel ID numérique - utiliser directement
+                        logger.info(f"🔍 Resolving chat with ID: {channel_id}")
+                        chat = await app.bot.get_chat(channel_id)
+                        resolved_channel = str(channel_id)
+                    else:
+                        # Channel username - résoudre d'abord
+                        logger.info(f"🔍 Resolving chat with username: {channel_id}")
+                        chat = await app.bot.get_chat(channel_id)
+                        resolved_channel = channel_id
+                        
+                except Exception as chat_error:
+                    logger.error(f"❌ Failed to resolve chat {channel_id}: {chat_error}")
+                    cursor.execute("UPDATE posts SET status = ? WHERE id = ?", ('missing_channel', post_id))
+                    conn.commit()
+                    return False
+                
+                logger.info(f"✅ Chat resolved: {chat.title} (ID: {chat.id})")
+                
                 # Construire une requête compatible selon le schéma réel
                 cursor.execute("PRAGMA table_info(posts)")
                 post_cols = [c[1] for c in cursor.fetchall()]
+                # Déterminer l'expression du nom de canal sans référencer des colonnes inexistantes
+                cursor.execute("PRAGMA table_info(channels)")
+                ch_cols = [c[1] for c in cursor.fetchall()]
+                has_name = 'name' in ch_cols
+                has_title = 'title' in ch_cols
+                if has_name and has_title:
+                    channel_name_expr = "COALESCE(c.name, c.title) AS channel_name"
+                elif has_name:
+                    channel_name_expr = "c.name AS channel_name"
+                elif has_title:
+                    channel_name_expr = "c.title AS channel_name"
+                else:
+                    channel_name_expr = "c.username AS channel_name"
 
                 if 'post_type' in post_cols and 'type' in post_cols:
                     # Les deux colonnes existent → préférer post_type sinon fallback type
                     sql_query = (
-                        """
+                        f"""
                         SELECT p.id,
                                COALESCE(NULLIF(p.post_type, ''), p.type) AS post_type,
                                p.content, p.caption, p.scheduled_time,
-                               COALESCE(c.name, c.title) AS channel_name, c.username, p.buttons, p.reactions
+                               COALESCE(c.name, c.username, p.channel_id) AS channel_name, 
+                               COALESCE(c.username, p.channel_id) AS channel_username, 
+                               p.buttons, p.reactions
                         FROM posts p
-                        JOIN channels c ON p.channel_id = c.id
+                        LEFT JOIN channels c ON (p.channel_id = c.id OR p.channel_id = c.username OR p.channel_id = '@' || c.username)
                         WHERE p.id = ?
                         """
                     )
                 elif 'post_type' in post_cols:
                     sql_query = (
-                        """
+                        f"""
                         SELECT p.id, p.post_type AS post_type,
                                p.content, p.caption, p.scheduled_time,
-                               COALESCE(c.name, c.title) AS channel_name, c.username, p.buttons, p.reactions
+                               COALESCE(c.name, c.username, p.channel_id) AS channel_name, 
+                               COALESCE(c.username, p.channel_id) AS channel_username, 
+                               p.buttons, p.reactions
                         FROM posts p
-                        JOIN channels c ON p.channel_id = c.id
+                        LEFT JOIN channels c ON (p.channel_id = c.id OR p.channel_id = c.username OR p.channel_id = '@' || c.username)
                         WHERE p.id = ?
                         """
                     )
                 else:
                     # Fallback très ancien schéma: seulement 'type'
                     sql_query = (
-                        """
+                        f"""
                         SELECT p.id, p.type AS post_type,
                                p.content, p.caption, p.scheduled_time,
-                               COALESCE(c.name, c.title) AS channel_name, c.username, p.buttons, p.reactions
+                               COALESCE(c.name, c.username, p.channel_id) AS channel_name, 
+                               COALESCE(c.username, p.channel_id) AS channel_username, 
+                               p.buttons, p.reactions
                         FROM posts p
-                        JOIN channels c ON p.channel_id = c.id
+                        LEFT JOIN channels c ON (p.channel_id = c.id OR p.channel_id = c.username OR p.channel_id = '@' || c.username)
                         WHERE p.id = ?
                         """
                     )
@@ -232,6 +337,42 @@ async def send_scheduled_file(post: Dict[str, Any], app: Optional[Application] =
         content = complete_post.get('content')
         caption = complete_post.get('caption', '')
         channel = complete_post.get('channel_username')
+        
+        # Vérifier si le canal est manquant et utiliser un fallback
+        # ✅ Gérer les types channel (int/str) avant strip()
+        if not channel or (isinstance(channel, str) and channel.strip() == ""):
+            logger.warning(f"⚠️ Channel missing for post {post_id}")
+            logger.warning(f"   Channel: {channel}")
+            logger.warning(f"   Channel name: {complete_post.get('channel_name')}")
+            
+            # Essayer de récupérer le channel_id original depuis la base
+            try:
+                from config import settings
+                db_path = settings.db_config.get("path", "bot.db")
+                with sqlite3.connect(db_path) as conn:
+                    cursor = conn.cursor()
+                    cursor.execute("SELECT channel_id FROM posts WHERE id = ?", (post_id,))
+                    result = cursor.fetchone()
+                    if result and result[0]:
+                        original_channel_id = result[0]
+                        logger.info(f"🔍 Original channel_id from DB: {original_channel_id}")
+                        channel = original_channel_id
+                        complete_post['channel_username'] = channel
+                        logger.info(f"✅ Using original channel_id as fallback: {channel}")
+                    else:
+                        logger.error(f"❌ Post {post_id} not found in database or has no channel_id")
+                        logger.error(f"❌ This post was likely created without a channel or the channel was lost")
+                        # Mark the post in the DB so it can be inspected and fixed later
+                        try:
+                            cursor.execute("UPDATE posts SET status = ? WHERE id = ?", ('missing_channel', post_id))
+                            conn.commit()
+                            logger.info(f"🔁 Post {post_id} status set to 'missing_channel' in DB")
+                        except Exception as mark_err:
+                            logger.warning(f"⚠️ Unable to mark post {post_id} as missing_channel: {mark_err}")
+                        return False
+            except Exception as fallback_error:
+                logger.error(f"❌ Error retrieving original channel_id: {fallback_error}")
+                return False
 
         # === LIMITES: 2GB/jour et cooldown 60s par utilisateur (propriétaire du canal) ===
         try:
@@ -248,7 +389,9 @@ async def send_scheduled_file(post: Dict[str, Any], app: Optional[Application] =
                 except Exception:
                     _cols = []
 
-                clean_un = channel.lstrip('@') if channel else None
+                # ✅ Convertir channel en string pour éviter l'erreur lstrip sur int
+                channel_str = str(channel) if channel is not None else None
+                clean_un = channel_str.lstrip('@') if channel_str else None
                 owner_user_id = None
                 if 'user_id' in _cols:
                     # Schéma récent: user_id sur channels
@@ -311,12 +454,28 @@ async def send_scheduled_file(post: Dict[str, Any], app: Optional[Application] =
         if not channel:
             logger.error(f"❌ Channel missing for post {post_id}")
             logger.error(f"   Channel: {channel}")
+            # Persist status to DB so admins can locate and fix the post
+            try:
+                import sqlite3 as _sqlite
+                from config import settings
+                db_path = settings.db_config.get("path", "bot.db")
+                with _sqlite.connect(db_path) as _conn2:
+                    _cur2 = _conn2.cursor()
+                    _cur2.execute("UPDATE posts SET status = ? WHERE id = ?", ('missing_channel', post_id))
+                    _conn2.commit()
+                    logger.info(f"🔁 Post {post_id} status set to 'missing_channel' in DB")
+            except Exception as mark_err:
+                logger.warning(f"⚠️ Unable to mark post {post_id} as missing_channel: {mark_err}")
             return False
         
         # Ajouter @ au canal si nécessaire
         original_channel = channel
-        if not channel.startswith('@') and not channel.startswith('-'):
-            channel = f"@{channel}"
+        # ✅ Convertir channel en string pour éviter l'erreur startswith sur int
+        channel_str = str(channel) if channel is not None else ""
+        if not channel_str.startswith('@') and not channel_str.startswith('-'):
+            channel = f"@{channel_str}"
+        else:
+            channel = channel_str
         
         logger.info(f"📍 Normalized channel: '{original_channel}' → '{channel}'")
         logger.info(f"📍 Sending to {channel} - Type: {post_type}")

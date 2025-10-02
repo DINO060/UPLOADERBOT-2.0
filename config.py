@@ -56,6 +56,12 @@ class Settings:
     
     # Client settings
     clients: Dict[str, ClientConfig] = None
+
+    # AI model settings
+    # Can be overridden with environment variable AI_MODEL. If ENABLE_GPT5_MINI is set
+    # to a truthy value, the runtime will use 'gpt-5-mini' for all clients.
+    ai_model: str = os.getenv('AI_MODEL', 'gpt-4o-mini')
+    enable_gpt5_mini: bool = False
     
     def __post_init__(self):
         # Parse admin IDs from environment variable
@@ -105,8 +111,21 @@ class Settings:
         if not all([self.api_id, self.api_hash, self.bot_token]):
             raise ValueError("Incomplete configuration: API_ID, API_HASH and BOT_TOKEN are required")
 
+        # Parse AI toggle from environment
+        enable_gpt5 = os.getenv('ENABLE_GPT5_MINI', '').strip().lower()
+        self.enable_gpt5_mini = enable_gpt5 in ('1', 'true', 'yes', 'on')
+
+        # If the global toggle is enabled, override ai_model
+        if self.enable_gpt5_mini:
+            logger.info("🔒 ENABLE_GPT5_MINI enabled: forcing ai_model to 'gpt-5-mini' for all clients")
+            self.ai_model = 'gpt-5-mini'
+
 # Create a global settings instance
 settings = Settings()
 
 # Export admin IDs for compatibility with bot.py
-ADMIN_IDS = ",".join(str(id) for id in settings.admin_ids) 
+ADMIN_IDS = ",".join(str(id) for id in settings.admin_ids)
+
+# Export selected AI model and toggle for easy imports elsewhere
+AI_MODEL = settings.ai_model
+ENABLE_GPT5_MINI = settings.enable_gpt5_mini

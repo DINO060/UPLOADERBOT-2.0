@@ -6,7 +6,7 @@ from telegram.ext import ContextTypes, ConversationHandler
 from utils.message_utils import send_message, PostType, MessageError
 from database.manager import DatabaseManager
 from utils.error_handler import handle_error
-from conversation_states import MAIN_MENU, POST_CONTENT, SCHEDULE_SEND, SETTINGS, WAITING_THUMBNAIL, WAITING_CHANNEL_INFO
+from conversation_states import MAIN_MENU, POST_CONTENT, SCHEDULE_SEND, SETTINGS, WAITING_CHANNEL_INFO
 from database.channel_repo import list_user_channels, get_channel_by_username as repo_get_channel_by_username, add_channel as repo_add_channel
 from i18n import get_user_lang, t
 
@@ -18,13 +18,11 @@ WELCOME_TEXT = (
     "I help you rename captions/filenames, set a custom thumbnail, and schedule your posts to your channels.\n\n"
     "📋 Features:\n"
     "• Rename caption/filename\n"
-    "• Set a custom thumbnail\n"
     "• Schedule post sending\n\n"
     "🎯 Commands:\n"
     "/start - Show this message\n"
     "/help - Show help and usage\n"
     "/addchannel - Add a new channel (Name @username or just @username)\n"
-    "/setthumbnail - Set a thumbnail for a channel (use with @username or current selection)\n"
     "/settings - Open settings\n\n"
     "🛠 Admin commands:\n"
     "/addfsub - Add forced-subscription channels (admin)\n"
@@ -365,36 +363,6 @@ class CommandHandlers:
             await update.message.reply_text("❌ Error while adding channel.")
             return SETTINGS
 
-    async def setthumbnail_cmd(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-        """Set thumbnail for a channel. Usage: /setthumbnail @username (or use current selection)"""
-        # Determine target channel
-        arg_username = None
-        if context.args:
-            raw = context.args[0].strip()
-            if raw.startswith('https://t.me/'):
-                arg_username = raw.replace('https://t.me/', '').lstrip('@')
-            else:
-                arg_username = raw.lstrip('@')
-
-        if arg_username:
-            context.user_data['selected_channel'] = {'username': f"@{arg_username}", 'name': arg_username}
-        else:
-            selected = context.user_data.get('selected_channel', {})
-            if not selected or not selected.get('username'):
-                await update.message.reply_text(
-                    "❌ No channel selected. Provide an @username like `/setthumbnail @mychannel` or use Settings.",
-                    parse_mode='Markdown'
-                )
-                return SETTINGS
-
-        # Ask for image
-        channel_username = context.user_data.get('selected_channel', {}).get('username')
-        context.user_data['waiting_for_channel_thumbnail'] = True
-        await update.message.reply_text(
-            f"📷 Send the image to use as the thumbnail for {channel_username}.\n\n"
-            "The image must be under 200 KB."
-        )
-        return WAITING_THUMBNAIL
 
     async def language_cmd(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         """Handles the /language command"""

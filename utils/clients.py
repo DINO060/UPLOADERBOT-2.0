@@ -3,6 +3,7 @@ Gestionnaire des clients Telegram (Bot API + Pyrogram uniquement)
 Utilise maintenant le client Pyrogram global géré par PTB
 """
 import logging
+import asyncio
 from typing import Optional, Dict, Any
 from config import settings
 
@@ -18,16 +19,14 @@ class ClientManager:
             return
 
         try:
-            logger.info("🔄 Vérification du client Pyrogram global...")
-            
-            # Utiliser le client global
-            from utils.pyro_client import get_global_pyro_client, is_pyro_available
-            
-            if is_pyro_available():
+            logger.info("🔄 Initialisation du client Pyrogram (singleton)…")
+            from utils.pyro_client import get_pyro
+            client = await get_pyro()
+            if client:
                 self._active = True
-                logger.info("✅ Client Pyrogram global disponible")
+                logger.info("✅ Client Pyrogram disponible")
             else:
-                logger.warning("⚠️ Client Pyrogram global non disponible")
+                logger.warning("⚠️ Client Pyrogram non disponible")
                 logger.warning("⚠️ Bot continuera en mode dégradé (API Bot seulement)")
 
         except Exception as e:
@@ -54,14 +53,21 @@ class ClientManager:
         """
         logger.info(f"🔍 get_best_client: operation={operation}, file_size={file_size/1024/1024:.1f}MB")
         
-        # Utiliser le client global
-        from utils.pyro_client import get_global_pyro_client, is_pyro_available
-        
-        if not is_pyro_available():
-            logger.error(f"❌ Client Pyrogram global non disponible pour {operation}")
-            raise Exception(f"Client Pyrogram global non disponible pour {operation}")
-        
-        pyro_client = get_global_pyro_client()
+        # Récupérer le client singleton
+        from utils.pyro_client import get_pyro
+        max_wait = getattr(settings, 'pyro_startup_wait', 8)  # secondes
+        interval = 0.5
+        waited = 0.0
+        pyro_client = await get_pyro()
+        if not pyro_client:
+            logger.info("⏳ Attente de la disponibilité du client Pyrogram…")
+            while waited < max_wait and not pyro_client:
+                await asyncio.sleep(interval)
+                waited += interval
+                pyro_client = await get_pyro()
+        if not pyro_client:
+            logger.error(f"❌ Client Pyrogram non disponible pour {operation}")
+            raise Exception(f"Client Pyrogram non disponible pour {operation}")
         logger.info(f"✅ Utilisation du client Pyrogram global pour {operation}")
         return {"client": pyro_client, "type": "pyrogram"}
 
@@ -72,11 +78,16 @@ class ClientManager:
         Returns:
             Client Pyrogram global ou None
         """
-        from utils.pyro_client import get_global_pyro_client, is_pyro_available
-        
-        if is_pyro_available():
-            return get_global_pyro_client()
-        return None
+        from utils.pyro_client import get_pyro
+        max_wait = getattr(settings, 'pyro_startup_wait', 5)
+        interval = 0.5
+        waited = 0.0
+        pyro_client = await get_pyro()
+        while not pyro_client and waited < max_wait:
+            await asyncio.sleep(interval)
+            waited += interval
+            pyro_client = await get_pyro()
+        return pyro_client
 
     async def handle_peer_error(self, client_type: str, error: Exception):
         """

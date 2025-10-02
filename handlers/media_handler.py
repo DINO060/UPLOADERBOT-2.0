@@ -150,7 +150,7 @@ async def send_file_smart(
                 }
                 if progress_chat and progress_msg_id:
                     try:
-                        await context.bot.edit_message_text(chat_id=progress_chat, message_id=progress_msg_id, text=f"✅ {progress_prefix}Terminé")
+                        await context.bot.edit_message_text(chat_id=progress_chat, message_id=progress_msg_id, text=f"✅ {progress_prefix}Completed")
                     except Exception:
                         pass
                 return result
@@ -183,17 +183,17 @@ async def send_file_smart(
                         file_id = message.document.file_id
                     if progress_chat and progress_msg_id:
                         try:
-                            await context.bot.edit_message_text(progress_chat, progress_msg_id, f"✅ {progress_prefix}Terminé")
+                            await context.bot.edit_message_text(progress_chat, progress_msg_id, f"✅ {progress_prefix}Completed")
                         except Exception:
                             pass
                     return {"success": True, "message_id": message.id, "file_id": file_id, "client": "pyrogram"}
                 
                 elif "FILE_REFERENCE_EXPIRED" in error_str or "file reference" in error_str.lower():
-                    raise Exception(f"Référence de fichier expirée: {error_str}")
+                    raise Exception(f"File reference expired: {error_str}")
                     
                 elif "File is too big" in error_str or "file is too big" in error_str.lower():
-                    # Recréer/relancer Pyrogram et retenter
-                    logger.info("🔄 Re-tentative Pyrogram pour gros fichier")
+                    # Recreate/restart Pyrogram and retry
+                    logger.info("🔄 Pyrogram retry for large file")
                     fallback_client_info = await client_manager.get_best_client(file_size, "upload")
                     fallback_client = fallback_client_info["client"]
                     message = await _send_with_pyrogram(
@@ -209,13 +209,13 @@ async def send_file_smart(
                         file_id = message.document.file_id
                     if progress_chat and progress_msg_id:
                         try:
-                            await context.bot.edit_message_text(progress_chat, progress_msg_id, f"✅ {progress_prefix}Terminé")
+                            await context.bot.edit_message_text(progress_chat, progress_msg_id, f"✅ {progress_prefix}Completed")
                         except Exception:
                             pass
                     return {"success": True, "message_id": message.id, "file_id": file_id, "client": "pyrogram"}
                 
                 else:
-                    # Autres erreurs - les relancer directement
+                    # Other errors - raise them directly
                     raise send_error
 
         finally:

@@ -61,7 +61,7 @@ def create_reactions_keyboard(selected_reactions: List[str]) -> InlineKeyboardMa
         keyboard.append(row)
     
     # Ajouter le bouton Terminé
-    keyboard.append([InlineKeyboardButton("Terminé", callback_data="reactions_done")])
+    keyboard.append([InlineKeyboardButton("Done", callback_data="reactions_done")])
     
     return InlineKeyboardMarkup(keyboard)
 
@@ -108,7 +108,7 @@ def create_url_buttons_keyboard(selected_buttons: List[Dict[str, str]]) -> Inlin
         ])
     
     # Ajouter le bouton Terminé
-    keyboard.append([InlineKeyboardButton("Terminé", callback_data="url_done")])
+    keyboard.append([InlineKeyboardButton("Done", callback_data="url_done")])
     
     return InlineKeyboardMarkup(keyboard)
 
@@ -123,7 +123,7 @@ async def save_post_with_reactions(update: Update, context: ContextTypes.DEFAULT
     # Récupérer les données du post
     post_data = context.user_data.get('current_post', {})
     if not post_data:
-        await query.edit_message_text("Erreur: Aucune donnée de publication trouvée")
+        await query.edit_message_text("Error: No publication data found")
         return MAIN_MENU
     
     try:
@@ -288,17 +288,17 @@ async def handle_reaction_input(update, context):
         if text == '/cancel':
             context.user_data.pop('waiting_for_reactions', None)
             context.user_data.pop('current_post_index', None)
-            await update.message.reply_text("❌ Ajout de réactions annulé.")
+            await update.message.reply_text("❌ Adding reactions cancelled.")
             return WAITING_PUBLICATION_CONTENT
 
         reactions = [r.strip() for r in text.split('/') if r.strip()]
         if len(reactions) > 8:
             reactions = reactions[:8]
-            await update.message.reply_text("⚠️ Maximum 8 réactions permises. Seules les 8 premières ont été gardées.")
+            await update.message.reply_text("⚠️ Maximum 8 reactions allowed. Only the first 8 have been kept.")
         if not reactions:
             await update.message.reply_text(
-                "❌ Aucune réaction valide détectée. Veuillez réessayer.",
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("↩️ Retour", callback_data="main_menu")]])
+                "❌ No valid reactions detected. Please try again.",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("↩️ Back", callback_data="main_menu")]])
             )
             return WAITING_PUBLICATION_CONTENT
         # Mise à jour du post dans le contexte
@@ -319,7 +319,7 @@ async def handle_reaction_input(update, context):
         for reaction in reactions:
             current_row.append(InlineKeyboardButton(
                 f"{reaction}",
-                callback_data=f"react_{post_index}_{reaction}"
+                callback_data=f"r:{reaction}:{post_index}"
             ))
             if len(current_row) == 4:
                 keyboard.append(current_row)
@@ -328,7 +328,7 @@ async def handle_reaction_input(update, context):
             keyboard.append(current_row)
         # Ajout des boutons d'action
         keyboard.extend([
-            [InlineKeyboardButton("Supprimer les réactions", callback_data=f"remove_reactions_{post_index}")],
+            [InlineKeyboardButton("Remove Reactions", callback_data=f"remove_reactions_{post_index}")],
             [InlineKeyboardButton("🔗 Ajouter un bouton URL", callback_data=f"add_url_button_{post_index}")],
             [InlineKeyboardButton("✏️ Edit File", callback_data=f"edit_file_{post_index}")],
             [InlineKeyboardButton("❌ Supprimer", callback_data=f"delete_post_{post_index}")]
@@ -426,11 +426,11 @@ async def handle_url_input(update, context):
         if text == '/cancel':
             context.user_data.pop('waiting_for_url', None)
             context.user_data.pop('current_post_index', None)
-            await update.message.reply_text("❌ Ajout de bouton URL annulé.")
+            await update.message.reply_text("❌ Adding URL button cancelled.")
             return WAITING_PUBLICATION_CONTENT
         if '|' not in text:
             await update.message.reply_text(
-                "❌ Format incorrect. Utilisez : Texte du bouton | URL\nExemple : Visiter le site | https://example.com"
+                "❌ Incorrect format. Use: Button text | URL\nExample: Visit site | https://example.com"
             )
             return WAITING_PUBLICATION_CONTENT
         button_text, url = [part.strip() for part in text.split('|', 1)]
@@ -466,7 +466,7 @@ async def handle_url_input(update, context):
             for reaction in reactions_list:
                 current_row.append(InlineKeyboardButton(
                     f"{reaction}",
-                    callback_data=f"react_{post_index}_{reaction}"
+                    callback_data=f"r:{reaction}:{post_index}"
                 ))
                 if len(current_row) == 4:
                     keyboard.append(current_row)
@@ -479,15 +479,15 @@ async def handle_url_input(update, context):
 
         # Bouton réactions dynamique: ajouter si aucune réaction, supprimer si présentes
         if has_reactions:
-            keyboard.append([InlineKeyboardButton("🗑️ Supprimer les réactions", callback_data=f"remove_reactions_{post_index}")])
+            keyboard.append([InlineKeyboardButton("🗑️ Remove Reactions", callback_data=f"remove_reactions_{post_index}")])
         else:
-            keyboard.append([InlineKeyboardButton("✨ Ajouter des réactions", callback_data=f"add_reactions_{post_index}")])
+            keyboard.append([InlineKeyboardButton("✨ Add Reactions", callback_data=f"add_reactions_{post_index}")])
 
-        # Boutons annexes
+        # Additional buttons
         keyboard.extend([
-            [InlineKeyboardButton("Supprimer les boutons URL", callback_data=f"remove_url_buttons_{post_index}")],
+            [InlineKeyboardButton("Remove URL Buttons", callback_data=f"remove_url_buttons_{post_index}")],
             [InlineKeyboardButton("✏️ Edit File", callback_data=f"edit_file_{post_index}")],
-            [InlineKeyboardButton("❌ Supprimer", callback_data=f"delete_post_{post_index}")]
+            [InlineKeyboardButton("❌ Delete", callback_data=f"delete_post_{post_index}")]
         ])
         reply_markup = InlineKeyboardMarkup(keyboard)
         preview_info = context.user_data.get('preview_messages', {}).get(post_index)
@@ -571,11 +571,11 @@ async def remove_reactions(update, context):
         if 'posts' in context.user_data and post_index < len(context.user_data['posts']):
             context.user_data['posts'][post_index]['reactions'] = []
             
-            # Reconstruire le clavier sans réactions
+            # Rebuild keyboard without reactions
             keyboard = [
-                [InlineKeyboardButton("➕ Ajouter des réactions", callback_data=f"add_reactions_{post_index}")],
-                [InlineKeyboardButton("🔗 Ajouter un bouton URL", callback_data=f"add_url_button_{post_index}")],
-                [InlineKeyboardButton("❌ Supprimer", callback_data=f"delete_post_{post_index}")],
+                [InlineKeyboardButton("➕ Add Reactions", callback_data=f"add_reactions_{post_index}")],
+                [InlineKeyboardButton("🔗 Add URL Button", callback_data=f"add_url_button_{post_index}")],
+                [InlineKeyboardButton("❌ Delete", callback_data=f"delete_post_{post_index}")],
                 [InlineKeyboardButton("✏️ Edit File", callback_data=f"edit_file_{post_index}")]
             ]
             
@@ -586,13 +586,13 @@ async def remove_reactions(update, context):
                 if "Message is not modified" not in str(e):
                     logger.error(f"Erreur lors de la mise à jour du message: {e}")
             
-            await query.message.reply_text("✅ Réactions supprimées avec succès!")
+            await query.message.reply_text("✅ Reactions removed successfully!")
             
         return WAITING_PUBLICATION_CONTENT
         
     except Exception as e:
         logger.error(f"Erreur dans remove_reactions: {e}")
-        await query.answer("Erreur lors de la suppression des réactions")
+        await query.answer("Error removing reactions")
         return WAITING_PUBLICATION_CONTENT
 
 async def remove_url_buttons(update, context):
@@ -608,11 +608,11 @@ async def remove_url_buttons(update, context):
         if 'posts' in context.user_data and post_index < len(context.user_data['posts']):
             context.user_data['posts'][post_index]['buttons'] = []
             
-            # Reconstruire le clavier sans boutons URL
+            # Rebuild keyboard without URL buttons
             keyboard = [
-                [InlineKeyboardButton("➕ Ajouter des réactions", callback_data=f"add_reactions_{post_index}")],
-                [InlineKeyboardButton("🔗 Ajouter un bouton URL", callback_data=f"add_url_button_{post_index}")],
-                [InlineKeyboardButton("❌ Supprimer", callback_data=f"delete_post_{post_index}")],
+                [InlineKeyboardButton("➕ Add Reactions", callback_data=f"add_reactions_{post_index}")],
+                [InlineKeyboardButton("🔗 Add URL Button", callback_data=f"add_url_button_{post_index}")],
+                [InlineKeyboardButton("❌ Delete", callback_data=f"delete_post_{post_index}")],
                 [InlineKeyboardButton("✏️ Edit File", callback_data=f"edit_file_{post_index}")]
             ]
             
@@ -623,7 +623,7 @@ async def remove_url_buttons(update, context):
                 if "Message is not modified" not in str(e):
                     logger.error(f"Erreur lors de la mise à jour du message: {e}")
             
-            await query.message.reply_text("✅ Boutons URL supprimés avec succès!")
+            await query.message.reply_text("✅ URL buttons removed successfully!")
             
         return WAITING_PUBLICATION_CONTENT
         
