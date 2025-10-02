@@ -115,3 +115,54 @@ sessions/
 
 # Local Netlify folder
 .netlify
+
+# Additional bot-specific files
+# Chat exports and media backups
+exports/
+media_backup/
+channel_backup/
+
+# Test files and temporary scripts
+test_*.py
+*_test.py
+debug_*.py
+temp_*.py
+
+# User-generated content
+uploads/
+user_files/
+attachments/
+
+# Performance and monitoring
+*.prof
+*.trace
+performance_logs/
+
+# Development tools
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+
+# Database migrations and scripts
+migrations/
+db_scripts/
+*.sql
+
+# API response caches
+api_cache/
+response_cache/
+
+# Bot analytics and metrics
+analytics/
+metrics/
+stats_backup/
+
+# Development databases
+dev.db
+test.db
+local.db
+
+# Jupyter notebooks (if used for analysis)
+*.ipynb_checkpoints/
+analysis/*.ipynb
