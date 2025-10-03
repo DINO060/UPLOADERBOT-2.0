@@ -41,6 +41,22 @@ def get_member_fk_column_helper(cursor) -> str:
             return "channel_id"
     return "channel_id"  # default
 
+def get_fk_column_for_table(cursor, table_name: str) -> str:
+    """Détermine le nom de la colonne FK vers channels pour une table donnée"""
+    if not table_exists_helper(cursor, table_name):
+        return None  # Pas de colonne si table n'existe pas
+    
+    cursor.execute(f"PRAGMA table_info({table_name})")
+    cols = [c[1] for c in cursor.fetchall()]
+    
+    # Cherche les variantes possibles de FK vers channels
+    for col_name in ["channel_id", "channels_id"]:
+        if col_name in cols:
+            return col_name
+    
+    # Pas de FK vers channels trouvée
+    return None
+
 def connect_db_helper():
     conn = sqlite3.connect(DB_CONFIG["path"], timeout=DB_CONFIG["timeout"], check_same_thread=DB_CONFIG["check_same_thread"])
     conn.execute("PRAGMA foreign_keys = ON;")
@@ -338,11 +354,13 @@ class DatabaseManager:
                     (channel_id,)
                 )
             elif has_members:
+                # Utiliser la détection dynamique pour le JOIN
+                member_fk_col = get_member_fk_column_helper(cursor)
                 cursor.execute(
                     f"""
                     SELECT c.id, {name_expr} AS name, c.username, cm.user_id{select_created}
                     FROM channels c
-                    LEFT JOIN channel_members cm ON cm.channel_id = c.id
+                    LEFT JOIN channel_members cm ON cm.{member_fk_col} = c.id
                     WHERE c.id = ?
                     LIMIT 1
                     """,
@@ -517,16 +535,18 @@ class DatabaseManager:
 
             # 3) Suppression manuelle des dépendances (au cas où CASCADE n'est pas en place)
             dependency_tables = (
-                "user_reactions",
-                "reaction_counts",
-                "scheduled_posts",
-                "posts",
-                "jobs",
-                "files",
+                "posts",           # A channel_id ✅
+                "scheduled_posts", # Peut avoir channel_id
+                "jobs",            # Peut avoir channel_id  
+                "post_messages",   # Lié indirectement via posts
+                # user_reactions, reaction_counts, reaction_votes, files n'ont pas de channel_id
             )
             for t in dependency_tables:
                 if table_exists_helper(cursor, t):
-                    cursor.execute(f"DELETE FROM {t} WHERE channel_id = ?", (channel_id,))
+                    # Détecter le nom de la colonne FK pour chaque table
+                    fk_col = get_fk_column_for_table(cursor, t)
+                    if fk_col:  # Seulement si la table a une FK vers channels
+                        cursor.execute(f"DELETE FROM {t} WHERE {fk_col} = ?", (channel_id,))
 
             # 4) Supprimer le canal
             cursor.execute(f"DELETE FROM channels WHERE {id_col} = ?", (channel_id,))
