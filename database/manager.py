@@ -4,11 +4,37 @@ import logging
 from datetime import datetime
 from pathlib import Path
 from config import settings
+
+# Configuration DB centralisée - évite les conflits d'import
+from pathlib import Path
+DATA_DIR = Path(__file__).resolve().parent.parent / "data"
+DATA_DIR.mkdir(parents=True, exist_ok=True)
+DB_PATH = DATA_DIR / "bot.db"
+
+DB_CONFIG = {
+    "path": str(DB_PATH),
+    "timeout": 30,
+    "check_same_thread": False,
+}
 import os
 import json
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, scoped_session
 from sqlalchemy.ext.declarative import declarative_base
+# Import des helpers DB (inline pour éviter conflits d'import)
+def table_exists_helper(cursor, name: str) -> bool:
+    cursor.execute("SELECT 1 FROM sqlite_master WHERE type IN ('table','view') AND name=?", (name,))
+    return cursor.fetchone() is not None
+
+def id_column_for_channels_helper(cursor) -> str:
+    cursor.execute("PRAGMA table_info(channels)")
+    cols = [c[1] for c in cursor.fetchall()]
+    return "channel_id" if "channel_id" in cols else "id"
+
+def connect_db_helper():
+    conn = sqlite3.connect(DB_CONFIG["path"], timeout=DB_CONFIG["timeout"], check_same_thread=DB_CONFIG["check_same_thread"])
+    conn.execute("PRAGMA foreign_keys = ON;")
+    return conn
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +69,7 @@ class DatabaseManager:
 
     def __init__(self):
         """Initializes the database manager"""
-        self.db_path = settings.db_config["path"]
+        self.db_path = DB_CONFIG["path"]  # Utilise la config centralisée
         self.connection = None
         self.setup_database()
 
@@ -56,18 +82,16 @@ class DatabaseManager:
                 os.makedirs(db_dir, exist_ok=True)
                 logger.info(f"Database directory created: {db_dir}")
             
-            self.connection = sqlite3.connect(
-                self.db_path,
-                timeout=settings.db_config["timeout"],
-                check_same_thread=settings.db_config["check_same_thread"]
-            )
+            # Utilise la connexion centralisée avec FK toujours activées
+            self.connection = connect_db_helper()
+            
             # Apply PRAGMAs to improve reliability/performance
             try:
                 self.connection.execute("PRAGMA journal_mode=WAL")
                 self.connection.execute("PRAGMA synchronous=NORMAL")
-                self.connection.execute("PRAGMA foreign_keys=ON")
                 self.connection.execute("PRAGMA busy_timeout=10000")
                 self.connection.execute("PRAGMA cache_size=10000")
+                # FK déjà activées par connect_db()
             except Exception:
                 pass
             cursor = self.connection.cursor()
@@ -413,42 +437,96 @@ class DatabaseManager:
             logger.error(f"Error listing channels: {e}")
             raise DatabaseError(f"Error listing channels: {e}")
 
-    def delete_channel(self, channel_id: int, user_id: int) -> bool:
+    def delete_channel_fixed(self, channel_id: int, user_id: int) -> bool:
         """
-        Deletes a channel and all its associated publications
-        VERSION CORRIGÉE avec FK CASCADE - Simple et efficace
+        Deletes a channel and all its associated publications (robuste).
+        - Chemin DB unique
+        - FK activées
+        - Détection du bon nom de clé primaire (id/channel_id)
+        - Vérif d'accès (owner ou membre) compatible legacy
+        - Fallback: suppression manuelle des dépendances si pas de CASCADE
         """
         try:
             cursor = self.connection.cursor()
-            
-            # CRITIQUE: Activer les Foreign Keys à chaque connexion
             cursor.execute("PRAGMA foreign_keys = ON;")
 
-            # Vérifier que l'utilisateur a le droit (propriétaire du canal)
-            cursor.execute("SELECT 1 FROM channels WHERE id = ? AND user_id = ? LIMIT 1", 
-                          (channel_id, user_id))
+            # 0) Résoudre la vraie PK
+            id_col = id_column_for_channels_helper(cursor)
+
+            # 1) Le canal existe ?
+            cursor.execute(f"SELECT 1 FROM channels WHERE {id_col} = ?", (channel_id,))
             if not cursor.fetchone():
-                logger.warning(f"User {user_id} tried to delete channel {channel_id} without permission")
                 return False
 
-            # Suppression simple: les FK CASCADE s'occupent du reste
-            # DELETE posts, jobs, etc. automatiquement grâce au ON DELETE CASCADE
-            cursor.execute("DELETE FROM channels WHERE id = ?", (channel_id,))
-            
-            deleted_count = cursor.rowcount
-            self.connection.commit()
-            
-            if deleted_count == 1:
-                logger.info(f"✅ Channel {channel_id} deleted successfully by user {user_id} (CASCADE applied)")
-                return True
+            # 2) Vérifier l'autorisation (owner/admin)
+            has_members = table_exists_helper(cursor, "channel_members")
+
+            if has_members:
+                # channels.user_id (legacy) *ou* channel_members.user_id
+                cursor.execute("PRAGMA table_info(channels)")
+                has_user_id = any(col[1] == "user_id" for col in cursor.fetchall())
+
+                if has_user_id:
+                    cursor.execute(
+                        f"""
+                        SELECT 1
+                        FROM channels c
+                        LEFT JOIN channel_members cm ON cm.channel_id = c.{id_col}
+                        WHERE c.{id_col} = ? AND COALESCE(c.user_id, cm.user_id) = ?
+                        LIMIT 1
+                        """,
+                        (channel_id, user_id)
+                    )
+                else:
+                    cursor.execute(
+                        f"""
+                        SELECT 1 FROM channels c
+                        JOIN channel_members cm ON cm.channel_id = c.{id_col}
+                        WHERE c.{id_col} = ? AND cm.user_id = ?
+                        LIMIT 1
+                        """,
+                        (channel_id, user_id)
+                    )
             else:
-                logger.warning(f"⚠️ Channel {channel_id} not found or already deleted")
-                return False
-                
+                # fallback legacy: channels.user_id obligatoire
+                cursor.execute(f"PRAGMA table_info(channels)")
+                has_user_id = any(col[1] == "user_id" for col in cursor.fetchall())
+                if has_user_id:
+                    cursor.execute(f"SELECT 1 FROM channels WHERE {id_col} = ? AND user_id = ?", (channel_id, user_id))
+                else:
+                    # Si pas de contrôle possible → on refuse par sécurité
+                    return False
+
+            if not cursor.fetchone():
+                return False  # pas autorisé
+
+            # 3) Suppression manuelle des dépendances (au cas où CASCADE n'est pas en place)
+            dependency_tables = (
+                "user_reactions",
+                "reaction_counts",
+                "scheduled_posts",
+                "posts",
+                "jobs",
+                "files",
+            )
+            for t in dependency_tables:
+                if table_exists_helper(cursor, t):
+                    cursor.execute(f"DELETE FROM {t} WHERE channel_id = ?", (channel_id,))
+
+            # 4) Supprimer le canal
+            cursor.execute(f"DELETE FROM channels WHERE {id_col} = ?", (channel_id,))
+            self.connection.commit()
+            return cursor.rowcount > 0
+
         except sqlite3.Error as e:
-            logger.error(f"Error deleting channel {channel_id}: {e}")
+            # Si tu vois encore 'channels_old' ici, c'est qu'un autre module l'utilise encore.
+            # Grep le repo et assure-toi que tous les imports sont rechargés après refactor.
+            logger.error(f"Error deleting channel (FIXED): {e}")
             self.connection.rollback()
             return False
+
+    # Alias pour compatibilité avec le code existant
+    delete_channel = delete_channel_fixed
 
     def get_channel_by_username(self, username: str, user_id: int) -> Optional[Dict[str, Any]]:
         """Gets a channel by its username for a specific user"""

@@ -3,6 +3,7 @@ Configuration pour le bot multi-clients (Bot API, Pyrogram, Telethon)
 """
 import os
 import logging
+from pathlib import Path
 from dotenv import load_dotenv
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Any
@@ -11,6 +12,18 @@ from typing import Dict, List, Optional, Any
 logger = logging.getLogger(__name__)
 
 load_dotenv()
+
+# ✅ Configuration DB centralisée - source unique de vérité
+DATA_DIR = Path(__file__).resolve().parent / "data"
+DATA_DIR.mkdir(parents=True, exist_ok=True)
+
+DB_PATH = DATA_DIR / "bot.db"     # => data/bot.db
+
+DB_CONFIG = {
+    "path": str(DB_PATH),
+    "timeout": 30,
+    "check_same_thread": False,
+}
 
 @dataclass
 class ClientConfig:
