@@ -31,6 +31,16 @@ def id_column_for_channels_helper(cursor) -> str:
     cols = [c[1] for c in cursor.fetchall()]
     return "channel_id" if "channel_id" in cols else "id"
 
+def get_member_fk_column_helper(cursor) -> str:
+    """Détermine le nom de la colonne FK dans channel_members vers channels"""
+    if table_exists_helper(cursor, "channel_members"):
+        cursor.execute("PRAGMA table_info(channel_members)")
+        cols = [c[1] for c in cursor.fetchall()]
+        # Cherche la colonne qui référence channels
+        if "channel_id" in cols:
+            return "channel_id"
+    return "channel_id"  # default
+
 def connect_db_helper():
     conn = sqlite3.connect(DB_CONFIG["path"], timeout=DB_CONFIG["timeout"], check_same_thread=DB_CONFIG["check_same_thread"])
     conn.execute("PRAGMA foreign_keys = ON;")
@@ -462,26 +472,31 @@ class DatabaseManager:
             has_members = table_exists_helper(cursor, "channel_members")
 
             if has_members:
+                # Déterminer les noms de colonnes corrects
+                member_fk_col = get_member_fk_column_helper(cursor)
+                
                 # channels.user_id (legacy) *ou* channel_members.user_id
                 cursor.execute("PRAGMA table_info(channels)")
                 has_user_id = any(col[1] == "user_id" for col in cursor.fetchall())
 
                 if has_user_id:
+                    # Schéma hybride: channels.user_id + channel_members
                     cursor.execute(
                         f"""
                         SELECT 1
                         FROM channels c
-                        LEFT JOIN channel_members cm ON cm.channel_id = c.{id_col}
+                        LEFT JOIN channel_members cm ON cm.{member_fk_col} = c.{id_col}
                         WHERE c.{id_col} = ? AND COALESCE(c.user_id, cm.user_id) = ?
                         LIMIT 1
                         """,
                         (channel_id, user_id)
                     )
                 else:
+                    # Schéma moderne: seulement channel_members
                     cursor.execute(
                         f"""
                         SELECT 1 FROM channels c
-                        JOIN channel_members cm ON cm.channel_id = c.{id_col}
+                        JOIN channel_members cm ON cm.{member_fk_col} = c.{id_col}
                         WHERE c.{id_col} = ? AND cm.user_id = ?
                         LIMIT 1
                         """,
