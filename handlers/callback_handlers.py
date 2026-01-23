@@ -385,7 +385,7 @@ async def handle_reaction_callback(update: Update, context: ContextTypes.DEFAULT
         logger.info(f"✅ Réaction {action}: {emoji} par user {user_id}")
         
     except Exception as e:
-        logger.error(f"❌ Erreur réaction callback: {e}")
+        logger.error(f"❌ Reaction callback error: {e}")
 
 
 async def update_reaction_keyboard(query, post_id: int, chat_id: int, message_id: int):
@@ -428,7 +428,7 @@ async def update_reaction_keyboard(query, post_id: int, chat_id: int, message_id
         await query.edit_message_reply_markup(reply_markup=InlineKeyboardMarkup(new_keyboard))
         
     except Exception as e:
-        logger.error(f"❌ Erreur mise à jour clavier: {e}")
+        logger.error(f"❌ Keyboard update error: {e}")
 
 
 # Mapping des actions vers les gestionnaires
@@ -488,24 +488,757 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             keyboard = [
                 [InlineKeyboardButton("📝 New post", callback_data="create_publication")],
                 [InlineKeyboardButton("📅 Scheduled posts", callback_data="planifier_post")],
-                [InlineKeyboardButton("📊 Statistics", callback_data="channel_stats")],
                 [InlineKeyboardButton("⚙️ Settings", callback_data="settings")]
             ]
-            
+
+            # Add redirect buttons from admin config
+            try:
+                from bot import get_redirect_buttons_keyboard
+                redirect_buttons = await get_redirect_buttons_keyboard()
+                keyboard.extend(redirect_buttons)
+            except Exception:
+                pass
+
             await safe_edit_callback_message(
                 query,
                 "Main menu:",
                 reply_markup=InlineKeyboardMarkup(keyboard)
             )
             return MAIN_MENU
-            
+
         elif callback_data == "create_publication":
             # Aller directement à la sélection des canaux pour créer une publication
             return await handle_create_publication(update, context)
             
         elif callback_data == "planifier_post" or callback_data == "scheduled_posts":
             return await planifier_post(update, context)
-        
+
+        # ============================================================
+        # ADMIN PANEL CALLBACKS
+        # ============================================================
+        elif callback_data == "adm_broadcast":
+            from config.settings import bot_config
+            admin_ids = bot_config.get("admin_ids", [])
+            if update.effective_user.id not in admin_ids:
+                await query.answer("❌ Admin only", show_alert=True)
+                return MAIN_MENU
+
+            # Get user count
+            from database.manager import DatabaseManager
+            db = DatabaseManager()
+            total_users = db.get_total_users()
+
+            await safe_edit_callback_message(
+                query,
+                f"📢 **Broadcast Message**\n\n"
+                f"👥 Recipients: `{total_users}` users\n\n"
+                f"Send me the message you want to broadcast.\n\n"
+                f"✅ Supported:\n"
+                f"• Text\n"
+                f"• Photo with caption\n"
+                f"• Video with caption\n"
+                f"• Document with caption\n\n"
+                f"_Send /cancel to abort_",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("↩️ Back", callback_data="adm_panel")]
+                ])
+            )
+            context.user_data['waiting_broadcast'] = True
+            return MAIN_MENU
+
+        elif callback_data == "adm_broadcast_confirm":
+            from config.settings import bot_config
+            admin_ids = bot_config.get("admin_ids", [])
+            if update.effective_user.id not in admin_ids:
+                await query.answer("❌ Admin only", show_alert=True)
+                return MAIN_MENU
+
+            # Get stored broadcast data
+            broadcast_data = context.user_data.get('broadcast_data')
+            if not broadcast_data:
+                await query.answer("No broadcast data found", show_alert=True)
+                return MAIN_MENU
+
+            await query.answer("📤 Starting broadcast...")
+
+            # Start broadcast
+            from database.manager import DatabaseManager
+            from bot import get_redirect_buttons_keyboard, is_user_banned
+            import asyncio
+
+            db = DatabaseManager()
+            user_ids = db.get_all_user_ids()
+
+            success_count = 0
+            fail_count = 0
+            blocked_count = 0
+
+            # Get redirect buttons
+            redirect_buttons = await get_redirect_buttons_keyboard()
+
+            # Progress message
+            progress_msg = await context.bot.send_message(
+                chat_id=query.message.chat_id,
+                text=f"📤 **Broadcasting...**\n\n"
+                     f"⏳ Progress: 0/{len(user_ids)}\n"
+                     f"✅ Success: 0\n"
+                     f"❌ Failed: 0"
+            )
+
+            for i, user_id in enumerate(user_ids):
+                try:
+                    # Skip banned users
+                    if await is_user_banned(user_id):
+                        blocked_count += 1
+                        continue
+
+                    # Build keyboard with redirect buttons
+                    keyboard = list(redirect_buttons) if redirect_buttons else []
+
+                    # Send based on type
+                    msg_type = broadcast_data.get('type')
+                    if msg_type == 'text':
+                        await context.bot.send_message(
+                            chat_id=user_id,
+                            text=broadcast_data.get('text', ''),
+                            parse_mode='HTML',
+                            reply_markup=InlineKeyboardMarkup(keyboard) if keyboard else None
+                        )
+                    elif msg_type == 'photo':
+                        await context.bot.send_photo(
+                            chat_id=user_id,
+                            photo=broadcast_data.get('file_id'),
+                            caption=broadcast_data.get('caption', ''),
+                            parse_mode='HTML',
+                            reply_markup=InlineKeyboardMarkup(keyboard) if keyboard else None
+                        )
+                    elif msg_type == 'video':
+                        await context.bot.send_video(
+                            chat_id=user_id,
+                            video=broadcast_data.get('file_id'),
+                            caption=broadcast_data.get('caption', ''),
+                            parse_mode='HTML',
+                            reply_markup=InlineKeyboardMarkup(keyboard) if keyboard else None
+                        )
+                    elif msg_type == 'document':
+                        await context.bot.send_document(
+                            chat_id=user_id,
+                            document=broadcast_data.get('file_id'),
+                            caption=broadcast_data.get('caption', ''),
+                            parse_mode='HTML',
+                            reply_markup=InlineKeyboardMarkup(keyboard) if keyboard else None
+                        )
+
+                    success_count += 1
+
+                except Exception as e:
+                    fail_count += 1
+                    logger.warning(f"Broadcast to {user_id} failed: {e}")
+
+                # Update progress every 10 users
+                if (i + 1) % 10 == 0:
+                    try:
+                        await progress_msg.edit_text(
+                            f"📤 **Broadcasting...**\n\n"
+                            f"⏳ Progress: {i + 1}/{len(user_ids)}\n"
+                            f"✅ Success: {success_count}\n"
+                            f"❌ Failed: {fail_count}"
+                        )
+                    except Exception:
+                        pass
+
+                # Rate limiting - small delay
+                await asyncio.sleep(0.05)
+
+            # Final result
+            try:
+                await progress_msg.edit_text(
+                    f"✅ **Broadcast Complete!**\n\n"
+                    f"📊 **Results:**\n"
+                    f"• Total: `{len(user_ids)}` users\n"
+                    f"• ✅ Success: `{success_count}`\n"
+                    f"• ❌ Failed: `{fail_count}`\n"
+                    f"• 🚫 Banned: `{blocked_count}`",
+                    reply_markup=InlineKeyboardMarkup([
+                        [InlineKeyboardButton("↩️ Back to Admin", callback_data="adm_panel")]
+                    ])
+                )
+            except Exception:
+                pass
+
+            # Clear broadcast data
+            context.user_data.pop('broadcast_data', None)
+            context.user_data.pop('waiting_broadcast', None)
+
+            return MAIN_MENU
+
+        elif callback_data == "adm_broadcast_cancel":
+            context.user_data.pop('broadcast_data', None)
+            context.user_data.pop('waiting_broadcast', None)
+            await query.answer("Broadcast cancelled")
+            # Return to admin panel
+            from database.manager import DatabaseManager
+            db = DatabaseManager()
+            total_users = db.get_total_users() if hasattr(db, 'get_total_users') else "N/A"
+
+            keyboard = [
+                [InlineKeyboardButton("📢 Broadcast", callback_data="adm_broadcast")],
+                [InlineKeyboardButton("👥 Force Join Channels", callback_data="adm_fsub")],
+                [InlineKeyboardButton("🚫 Ban/Unban User", callback_data="adm_ban")],
+                [InlineKeyboardButton("🔘 Redirect Buttons", callback_data="adm_redirect_buttons")],
+                [InlineKeyboardButton("📊 Bot Stats", callback_data="adm_stats")],
+                [InlineKeyboardButton("↩️ Main Menu", callback_data="main_menu")]
+            ]
+
+            await safe_edit_callback_message(
+                query,
+                f"🛠 **Admin Panel**\n\n"
+                f"👥 Total users: `{total_users}`\n\n"
+                "Select an option below:",
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
+            return MAIN_MENU
+
+        elif callback_data == "adm_fsub":
+            from config.settings import bot_config
+            admin_ids = bot_config.get("admin_ids", [])
+            if update.effective_user.id not in admin_ids:
+                await query.answer("❌ Admin only", show_alert=True)
+                return MAIN_MENU
+
+            # Load current channels
+            from bot import load_fj_channels
+            channels = await load_fj_channels()
+
+            channels_text = ""
+            if channels:
+                channels_text = "\n📋 **Current channels:**\n" + "\n".join(f"• `{ch}`" for ch in channels)
+            else:
+                channels_text = "\n📋 _No channels configured_"
+
+            keyboard = [
+                [InlineKeyboardButton("➕ Add Channel", callback_data="adm_fsub_add")],
+                [InlineKeyboardButton("➖ Remove Channel", callback_data="adm_fsub_remove")],
+                [InlineKeyboardButton("↩️ Back", callback_data="adm_panel")]
+            ]
+            await safe_edit_callback_message(
+                query,
+                f"👥 **Force Join Channels**\n\n"
+                f"Manage channels users must join before using the bot.\n"
+                f"{channels_text}",
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
+            return MAIN_MENU
+
+        elif callback_data == "adm_fsub_add":
+            from config.settings import bot_config
+            admin_ids = bot_config.get("admin_ids", [])
+            if update.effective_user.id not in admin_ids:
+                await query.answer("❌ Admin only", show_alert=True)
+                return MAIN_MENU
+
+            await safe_edit_callback_message(
+                query,
+                "➕ **Add Force Join Channel**\n\n"
+                "Send the channel username or ID.\n\n"
+                "Examples:\n"
+                "• `@mychannel`\n"
+                "• `-100123456789`\n"
+                "• `t.me/mychannel`\n\n"
+                "_Send /cancel to abort_",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("↩️ Cancel", callback_data="adm_fsub")]
+                ])
+            )
+            context.user_data['waiting_fsub_add'] = True
+            return MAIN_MENU
+
+        elif callback_data == "adm_fsub_remove":
+            from config.settings import bot_config
+            admin_ids = bot_config.get("admin_ids", [])
+            if update.effective_user.id not in admin_ids:
+                await query.answer("❌ Admin only", show_alert=True)
+                return MAIN_MENU
+
+            # Load current channels and show as buttons
+            from bot import load_fj_channels
+            channels = await load_fj_channels()
+
+            if not channels:
+                await query.answer("No channels to remove", show_alert=True)
+                return MAIN_MENU
+
+            keyboard = []
+            for ch in channels:
+                keyboard.append([InlineKeyboardButton(f"🗑 {ch}", callback_data=f"adm_fsub_del:{ch}")])
+            keyboard.append([InlineKeyboardButton("↩️ Back", callback_data="adm_fsub")])
+
+            await safe_edit_callback_message(
+                query,
+                "➖ **Remove Force Join Channel**\n\n"
+                "Click on a channel to remove it:",
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
+            return MAIN_MENU
+
+        elif callback_data.startswith("adm_fsub_del:"):
+            from config.settings import bot_config
+            admin_ids = bot_config.get("admin_ids", [])
+            if update.effective_user.id not in admin_ids:
+                await query.answer("❌ Admin only", show_alert=True)
+                return MAIN_MENU
+
+            channel_to_remove = callback_data.replace("adm_fsub_del:", "")
+
+            from bot import load_fj_channels, save_fj_channels, fj_lock
+            async with fj_lock:
+                channels = await load_fj_channels()
+                if channel_to_remove in channels:
+                    channels.remove(channel_to_remove)
+                    await save_fj_channels(channels)
+                    await query.answer(f"✅ Removed: {channel_to_remove}", show_alert=True)
+                else:
+                    await query.answer("Channel not found", show_alert=True)
+
+            # Refresh the list
+            channels = await load_fj_channels()
+            if not channels:
+                await safe_edit_callback_message(
+                    query,
+                    "👥 **Force Join Channels**\n\n"
+                    "📋 _No channels configured_",
+                    reply_markup=InlineKeyboardMarkup([
+                        [InlineKeyboardButton("➕ Add Channel", callback_data="adm_fsub_add")],
+                        [InlineKeyboardButton("↩️ Back", callback_data="adm_panel")]
+                    ])
+                )
+            else:
+                keyboard = []
+                for ch in channels:
+                    keyboard.append([InlineKeyboardButton(f"🗑 {ch}", callback_data=f"adm_fsub_del:{ch}")])
+                keyboard.append([InlineKeyboardButton("↩️ Back", callback_data="adm_fsub")])
+                await safe_edit_callback_message(
+                    query,
+                    "➖ **Remove Force Join Channel**\n\n"
+                    "Click on a channel to remove it:",
+                    reply_markup=InlineKeyboardMarkup(keyboard)
+                )
+            return MAIN_MENU
+
+        elif callback_data == "adm_ban":
+            from config.settings import bot_config
+            admin_ids = bot_config.get("admin_ids", [])
+            if update.effective_user.id not in admin_ids:
+                await query.answer("❌ Admin only", show_alert=True)
+                return MAIN_MENU
+
+            # Get banned users count
+            from bot import load_banned_users
+            banned = await load_banned_users()
+            banned_count = len(banned)
+
+            keyboard = [
+                [InlineKeyboardButton("🚫 Ban User", callback_data="adm_ban_user")],
+                [InlineKeyboardButton("✅ Unban User", callback_data="adm_unban_user")],
+                [InlineKeyboardButton("📋 Banned List", callback_data="adm_ban_list")],
+                [InlineKeyboardButton("↩️ Back", callback_data="adm_panel")]
+            ]
+            await safe_edit_callback_message(
+                query,
+                f"🚫 **Ban Management**\n\n"
+                f"Ban or unban users from using the bot.\n\n"
+                f"📊 Currently banned: `{banned_count}` user(s)",
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
+            return MAIN_MENU
+
+        elif callback_data == "adm_ban_user":
+            from config.settings import bot_config
+            admin_ids = bot_config.get("admin_ids", [])
+            if update.effective_user.id not in admin_ids:
+                await query.answer("❌ Admin only", show_alert=True)
+                return MAIN_MENU
+
+            await safe_edit_callback_message(
+                query,
+                "🚫 **Ban User**\n\n"
+                "Send the user ID to ban.\n\n"
+                "You can get the user ID by forwarding a message from them to @userinfobot\n\n"
+                "_Send /cancel to abort_",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("↩️ Cancel", callback_data="adm_ban")]
+                ])
+            )
+            context.user_data['waiting_ban_user'] = True
+            return MAIN_MENU
+
+        elif callback_data == "adm_unban_user":
+            from config.settings import bot_config
+            admin_ids = bot_config.get("admin_ids", [])
+            if update.effective_user.id not in admin_ids:
+                await query.answer("❌ Admin only", show_alert=True)
+                return MAIN_MENU
+
+            # Show banned users as buttons
+            from bot import load_banned_users
+            banned = await load_banned_users()
+
+            if not banned:
+                await query.answer("No banned users", show_alert=True)
+                return MAIN_MENU
+
+            keyboard = []
+            for b in banned[:20]:  # Limit to 20
+                user_id = b.get("user_id", 0)
+                reason = b.get("reason", "No reason")[:20]
+                keyboard.append([InlineKeyboardButton(
+                    f"✅ {user_id} - {reason}",
+                    callback_data=f"adm_do_unban:{user_id}"
+                )])
+            keyboard.append([InlineKeyboardButton("↩️ Back", callback_data="adm_ban")])
+
+            await safe_edit_callback_message(
+                query,
+                "✅ **Unban User**\n\n"
+                "Click on a user to unban:",
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
+            return MAIN_MENU
+
+        elif callback_data.startswith("adm_do_unban:"):
+            from config.settings import bot_config
+            admin_ids = bot_config.get("admin_ids", [])
+            if update.effective_user.id not in admin_ids:
+                await query.answer("❌ Admin only", show_alert=True)
+                return MAIN_MENU
+
+            user_id_to_unban = int(callback_data.replace("adm_do_unban:", ""))
+
+            from bot import unban_user
+            success = await unban_user(user_id_to_unban)
+
+            if success:
+                await query.answer(f"✅ User {user_id_to_unban} unbanned!", show_alert=True)
+            else:
+                await query.answer("User was not banned", show_alert=True)
+
+            # Refresh list
+            from bot import load_banned_users
+            banned = await load_banned_users()
+
+            if not banned:
+                await safe_edit_callback_message(
+                    query,
+                    "🚫 **Ban Management**\n\n"
+                    "📋 _No banned users_",
+                    reply_markup=InlineKeyboardMarkup([
+                        [InlineKeyboardButton("🚫 Ban User", callback_data="adm_ban_user")],
+                        [InlineKeyboardButton("↩️ Back", callback_data="adm_panel")]
+                    ])
+                )
+            else:
+                keyboard = []
+                for b in banned[:20]:
+                    uid = b.get("user_id", 0)
+                    reason = b.get("reason", "No reason")[:20]
+                    keyboard.append([InlineKeyboardButton(
+                        f"✅ {uid} - {reason}",
+                        callback_data=f"adm_do_unban:{uid}"
+                    )])
+                keyboard.append([InlineKeyboardButton("↩️ Back", callback_data="adm_ban")])
+                await safe_edit_callback_message(
+                    query,
+                    "✅ **Unban User**\n\n"
+                    "Click on a user to unban:",
+                    reply_markup=InlineKeyboardMarkup(keyboard)
+                )
+            return MAIN_MENU
+
+        elif callback_data == "adm_ban_list":
+            from config.settings import bot_config
+            admin_ids = bot_config.get("admin_ids", [])
+            if update.effective_user.id not in admin_ids:
+                await query.answer("❌ Admin only", show_alert=True)
+                return MAIN_MENU
+
+            from bot import load_banned_users
+            banned = await load_banned_users()
+
+            if not banned:
+                await safe_edit_callback_message(
+                    query,
+                    "📋 **Banned Users List**\n\n"
+                    "_No banned users_",
+                    reply_markup=InlineKeyboardMarkup([
+                        [InlineKeyboardButton("↩️ Back", callback_data="adm_ban")]
+                    ])
+                )
+            else:
+                text = "📋 **Banned Users List**\n\n"
+                for i, b in enumerate(banned[:15], 1):  # Limit to 15
+                    uid = b.get("user_id", 0)
+                    reason = b.get("reason", "No reason")
+                    banned_at = b.get("banned_at", "Unknown")[:10]
+                    text += f"{i}. `{uid}`\n   📝 {reason}\n   📅 {banned_at}\n\n"
+
+                if len(banned) > 15:
+                    text += f"_... and {len(banned) - 15} more_"
+
+                await safe_edit_callback_message(
+                    query,
+                    text,
+                    reply_markup=InlineKeyboardMarkup([
+                        [InlineKeyboardButton("↩️ Back", callback_data="adm_ban")]
+                    ])
+                )
+            return MAIN_MENU
+
+        elif callback_data == "adm_stats":
+            from config.settings import bot_config
+            admin_ids = bot_config.get("admin_ids", [])
+            if update.effective_user.id not in admin_ids:
+                await query.answer("❌ Admin only", show_alert=True)
+                return MAIN_MENU
+
+            # Get stats
+            from database.manager import DatabaseManager
+            db = DatabaseManager()
+            total_users = db.get_total_users() if hasattr(db, 'get_total_users') else "N/A"
+
+            import platform
+            import psutil
+            cpu = psutil.cpu_percent()
+            ram = psutil.virtual_memory().percent
+
+            stats_text = (
+                "📊 **Bot Statistics**\n\n"
+                f"👥 Total Users: `{total_users}`\n"
+                f"💻 CPU: `{cpu}%`\n"
+                f"🧠 RAM: `{ram}%`\n"
+                f"🐍 Python: `{platform.python_version()}`\n"
+                f"💻 OS: `{platform.system()}`"
+            )
+
+            await safe_edit_callback_message(
+                query,
+                stats_text,
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("🔄 Refresh", callback_data="adm_stats")],
+                    [InlineKeyboardButton("↩️ Back", callback_data="adm_panel")]
+                ])
+            )
+            return MAIN_MENU
+
+        elif callback_data == "adm_shortlinks":
+            from config.settings import bot_config
+            admin_ids = bot_config.get("admin_ids", [])
+            if update.effective_user.id not in admin_ids:
+                await query.answer("❌ Admin only", show_alert=True)
+                return MAIN_MENU
+
+            await safe_edit_callback_message(
+                query,
+                "🔗 **Short Links Configuration**\n\n"
+                "Configure short link providers for monetization.\n\n"
+                "Coming soon...",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("↩️ Back", callback_data="adm_panel")]
+                ])
+            )
+            return MAIN_MENU
+
+        elif callback_data == "adm_panel":
+            from config.settings import bot_config
+            admin_ids = bot_config.get("admin_ids", [])
+            if update.effective_user.id not in admin_ids:
+                await query.answer("❌ Admin only", show_alert=True)
+                return MAIN_MENU
+
+            from database.manager import DatabaseManager
+            db = DatabaseManager()
+            total_users = db.get_total_users() if hasattr(db, 'get_total_users') else "N/A"
+
+            keyboard = [
+                [InlineKeyboardButton("📢 Broadcast", callback_data="adm_broadcast")],
+                [InlineKeyboardButton("👥 Force Join Channels", callback_data="adm_fsub")],
+                [InlineKeyboardButton("🚫 Ban/Unban User", callback_data="adm_ban")],
+                [InlineKeyboardButton("🔘 Redirect Buttons", callback_data="adm_redirect_buttons")],
+                [InlineKeyboardButton("📊 Bot Stats", callback_data="adm_stats")],
+                [InlineKeyboardButton("↩️ Main Menu", callback_data="main_menu")]
+            ]
+
+            await safe_edit_callback_message(
+                query,
+                f"🛠 **Admin Panel**\n\n"
+                f"👥 Total users: `{total_users}`\n\n"
+                "Select an option below:",
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
+            return MAIN_MENU
+
+        # ============================================================
+        # REDIRECT BUTTONS CALLBACKS
+        # ============================================================
+        elif callback_data == "adm_redirect_buttons":
+            from config.settings import bot_config
+            admin_ids = bot_config.get("admin_ids", [])
+            if update.effective_user.id not in admin_ids:
+                await query.answer("❌ Admin only", show_alert=True)
+                return MAIN_MENU
+
+            from bot import load_redirect_buttons
+            buttons = await load_redirect_buttons()
+
+            buttons_text = ""
+            if buttons:
+                buttons_text = "\n📋 **Current buttons:**\n"
+                for i, b in enumerate(buttons, 1):
+                    buttons_text += f"{i}. [{b.get('text', 'Button')}]({b.get('url', '')})\n"
+            else:
+                buttons_text = "\n📋 _No buttons configured_"
+
+            keyboard = [
+                [InlineKeyboardButton("➕ Add Button", callback_data="adm_redirect_add")],
+                [InlineKeyboardButton("➖ Remove Button", callback_data="adm_redirect_remove")],
+                [InlineKeyboardButton("👁 Preview", callback_data="adm_redirect_preview")],
+                [InlineKeyboardButton("↩️ Back", callback_data="adm_panel")]
+            ]
+
+            await safe_edit_callback_message(
+                query,
+                f"🔘 **Redirect Buttons**\n\n"
+                f"These buttons will appear under:\n"
+                f"• Welcome message (/start)\n"
+                f"• Broadcast messages\n"
+                f"{buttons_text}",
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
+            return MAIN_MENU
+
+        elif callback_data == "adm_redirect_add":
+            from config.settings import bot_config
+            admin_ids = bot_config.get("admin_ids", [])
+            if update.effective_user.id not in admin_ids:
+                await query.answer("❌ Admin only", show_alert=True)
+                return MAIN_MENU
+
+            await safe_edit_callback_message(
+                query,
+                "➕ **Add Redirect Button**\n\n"
+                "Send the button in this format:\n\n"
+                "`Button Text | https://example.com`\n\n"
+                "Example:\n"
+                "`Join Channel | https://t.me/mychannel`\n\n"
+                "_Send /cancel to abort_",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("↩️ Cancel", callback_data="adm_redirect_buttons")]
+                ])
+            )
+            context.user_data['waiting_redirect_button'] = True
+            return MAIN_MENU
+
+        elif callback_data == "adm_redirect_remove":
+            from config.settings import bot_config
+            admin_ids = bot_config.get("admin_ids", [])
+            if update.effective_user.id not in admin_ids:
+                await query.answer("❌ Admin only", show_alert=True)
+                return MAIN_MENU
+
+            from bot import load_redirect_buttons
+            buttons = await load_redirect_buttons()
+
+            if not buttons:
+                await query.answer("No buttons to remove", show_alert=True)
+                return MAIN_MENU
+
+            keyboard = []
+            for i, b in enumerate(buttons):
+                text = b.get("text", "Button")[:20]
+                keyboard.append([InlineKeyboardButton(
+                    f"🗑 {text}",
+                    callback_data=f"adm_redirect_del:{i}"
+                )])
+            keyboard.append([InlineKeyboardButton("↩️ Back", callback_data="adm_redirect_buttons")])
+
+            await safe_edit_callback_message(
+                query,
+                "➖ **Remove Redirect Button**\n\n"
+                "Click on a button to remove it:",
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
+            return MAIN_MENU
+
+        elif callback_data.startswith("adm_redirect_del:"):
+            from config.settings import bot_config
+            admin_ids = bot_config.get("admin_ids", [])
+            if update.effective_user.id not in admin_ids:
+                await query.answer("❌ Admin only", show_alert=True)
+                return MAIN_MENU
+
+            index = int(callback_data.replace("adm_redirect_del:", ""))
+
+            from bot import remove_redirect_button, load_redirect_buttons
+            success = await remove_redirect_button(index)
+
+            if success:
+                await query.answer("✅ Button removed!", show_alert=True)
+            else:
+                await query.answer("Failed to remove button", show_alert=True)
+
+            # Refresh list
+            buttons = await load_redirect_buttons()
+            if not buttons:
+                await safe_edit_callback_message(
+                    query,
+                    "🔘 **Redirect Buttons**\n\n"
+                    "📋 _No buttons configured_",
+                    reply_markup=InlineKeyboardMarkup([
+                        [InlineKeyboardButton("➕ Add Button", callback_data="adm_redirect_add")],
+                        [InlineKeyboardButton("↩️ Back", callback_data="adm_panel")]
+                    ])
+                )
+            else:
+                keyboard = []
+                for i, b in enumerate(buttons):
+                    text = b.get("text", "Button")[:20]
+                    keyboard.append([InlineKeyboardButton(
+                        f"🗑 {text}",
+                        callback_data=f"adm_redirect_del:{i}"
+                    )])
+                keyboard.append([InlineKeyboardButton("↩️ Back", callback_data="adm_redirect_buttons")])
+                await safe_edit_callback_message(
+                    query,
+                    "➖ **Remove Redirect Button**\n\n"
+                    "Click on a button to remove it:",
+                    reply_markup=InlineKeyboardMarkup(keyboard)
+                )
+            return MAIN_MENU
+
+        elif callback_data == "adm_redirect_preview":
+            from config.settings import bot_config
+            admin_ids = bot_config.get("admin_ids", [])
+            if update.effective_user.id not in admin_ids:
+                await query.answer("❌ Admin only", show_alert=True)
+                return MAIN_MENU
+
+            from bot import get_redirect_buttons_keyboard
+            redirect_buttons = await get_redirect_buttons_keyboard()
+
+            if not redirect_buttons:
+                await query.answer("No buttons configured", show_alert=True)
+                return MAIN_MENU
+
+            # Add back button
+            redirect_buttons.append([InlineKeyboardButton("↩️ Back", callback_data="adm_redirect_buttons")])
+
+            await safe_edit_callback_message(
+                query,
+                "👁 **Preview**\n\n"
+                "This is how the buttons will appear:",
+                reply_markup=InlineKeyboardMarkup(redirect_buttons)
+            )
+            return MAIN_MENU
+
         elif callback_data == "channel_stats":
             # Génération du lien SSO pour les statistiques
             try:
@@ -535,7 +1268,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                 logger.error(f"Erreur lors de la génération du lien SSO: {e}")
                 await safe_edit_callback_message(
                     query,
-                    "❌ Erreur lors de la génération du lien d'accès.\n"
+                    "❌ Error generating access link.\n"
                     "Veuillez réessayer plus tard.",
                     reply_markup=InlineKeyboardMarkup([
                         [InlineKeyboardButton("↩️ Back", callback_data="main_menu")]
@@ -765,7 +1498,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                 post_index = int(callback_data.split('_')[-1])
             except Exception as e:
                 logger.error(f"Erreur parsing add_reactions_: {callback_data} - {e}")
-                await query.answer("❌ Erreur de format")
+                await query.answer("❌ Format error")
                 return MAIN_MENU
             from .reaction_functions import add_reactions_to_post
             return await add_reactions_to_post(update, context)
@@ -808,7 +1541,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                 post_index = int(callback_data.split('_')[-1])
             except Exception as e:
                 logger.error(f"Erreur parsing add_url_button_: {callback_data} - {e}")
-                await query.answer("❌ Erreur de format")
+                await query.answer("❌ Format error")
                 return MAIN_MENU
             from .reaction_functions import add_url_button_to_post
             return await add_url_button_to_post(update, context)
@@ -819,7 +1552,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                 post_index = int(callback_data.split('_')[-1])
             except Exception as e:
                 logger.error(f"Erreur parsing remove_reactions_: {callback_data} - {e}")
-                await query.answer("❌ Erreur de format")
+                await query.answer("❌ Format error")
                 return MAIN_MENU
             from .reaction_functions import remove_reactions
             return await remove_reactions(update, context)
@@ -830,7 +1563,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                 post_index = int(callback_data.split('_')[-1])
             except Exception as e:
                 logger.error(f"Erreur parsing remove_url_buttons_: {callback_data} - {e}")
-                await query.answer("❌ Erreur de format")
+                await query.answer("❌ Format error")
                 return MAIN_MENU
             from .reaction_functions import remove_url_buttons
             return await remove_url_buttons(update, context)
@@ -841,7 +1574,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                 post_index = int(callback_data.split('_')[-1])
             except Exception as e:
                 logger.error(f"Erreur parsing delete_post_: {callback_data} - {e}")
-                await query.answer("❌ Erreur de format")
+                await query.answer("❌ Format error")
                 return MAIN_MENU
             return await handle_delete_post(update, context, post_index)
             
@@ -900,7 +1633,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
                 msg = query.message
                 if not msg:
-                    await query.answer("❌ Erreur message", show_alert=False)
+                    await query.answer("❌ Message error", show_alert=False)
                     return MAIN_MENU
 
                 chat_id = msg.chat_id
@@ -1065,7 +1798,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                     await query.answer("⚠️ Action non implémentée")
                     return MAIN_MENU
             except Exception as e:
-                logger.error(f"❌ Erreur parsing callback non reconnu: {callback_data} - {e}")
+                logger.error(f"❌ Unrecognized callback parsing error: {callback_data} - {e}")
         
         await query.edit_message_text(
             f"⚠️ Action {callback_data} not implemented. Back to main menu.",
@@ -1110,11 +1843,11 @@ async def handle_edit_time(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         context.user_data['waiting_for_time'] = True
 
     except CallbackError as e:
-        logger.error(f"Erreur de modification d'heure: {str(e)}")
-        await query.edit_message_text(f"❌ Erreur: {str(e)}")
+        logger.error(f"Time modification error: {str(e)}")
+        await query.edit_message_text(f"❌ Error: {str(e)}")
     except Exception as e:
-        logger.error(f"Erreur inattendue: {str(e)}")
-        await query.edit_message_text("❌ Une erreur inattendue s'est produite")
+        logger.error(f"Unexpected error: {str(e)}")
+        await query.edit_message_text("❌ An unexpected error occurred")
 
 
 async def handle_send_now(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1157,16 +1890,16 @@ async def handle_cancel_post(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 "⚠️ Are you sure you want to cancel this publication?",
                 reply_markup=[[
                     InlineKeyboardButton("Yes", callback_data="annuler_publication"),
-                    InlineKeyboardButton("Non", callback_data="retour")
+                    InlineKeyboardButton("No", callback_data="retour")
                 ]]
             )
 
     except CallbackError as e:
-        logger.error(f"Erreur d'annulation: {str(e)}")
-        await query.edit_message_text(f"❌ Erreur: {str(e)}")
+        logger.error(f"Cancellation error: {str(e)}")
+        await query.edit_message_text(f"❌ Error: {str(e)}")
     except Exception as e:
-        logger.error(f"Erreur inattendue: {str(e)}")
-        await query.edit_message_text("❌ Une erreur inattendue s'est produite")
+        logger.error(f"Unexpected error: {str(e)}")
+        await query.edit_message_text("❌ An unexpected error occurred")
 
 
 async def handle_preview(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -1198,11 +1931,11 @@ async def handle_preview(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await query.edit_message_text(preview_text)
 
     except CallbackError as e:
-        logger.error(f"Erreur d'aperçu: {str(e)}")
-        await query.edit_message_text(f"❌ Erreur: {str(e)}")
+        logger.error(f"Preview error: {str(e)}")
+        await query.edit_message_text(f"❌ Error: {str(e)}")
     except Exception as e:
-        logger.error(f"Erreur inattendue: {str(e)}")
-        await query.edit_message_text("❌ Une erreur inattendue s'est produite")
+        logger.error(f"Unexpected error: {str(e)}")
+        await query.edit_message_text("❌ An unexpected error occurred")
 
 
 async def handle_post_type(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -1376,9 +2109,9 @@ async def handle_schedule_time(update: Update, context: ContextTypes.DEFAULT_TYP
                     minute = 0
         except ValueError:
             await update.message.reply_text(
-                "❌ Format d'heure invalide. Utilisez HH:MM (ex: 14:30) ou HH (ex: 14).",
+                "❌ Invalid time format. Use HH:MM (ex: 14:30) or HH (ex: 14).",
                 reply_markup=InlineKeyboardMarkup([[
-                    InlineKeyboardButton("↩️ Retour", callback_data="schedule_send")
+                    InlineKeyboardButton("↩️ Back", callback_data="schedule_send")
                 ]])
             )
             return SCHEDULE_SEND
@@ -1386,9 +2119,9 @@ async def handle_schedule_time(update: Update, context: ContextTypes.DEFAULT_TYP
             # Validation de l'heure
         if not (0 <= hour <= 23) or not (0 <= minute <= 59):
             await update.message.reply_text(
-                "❌ Heure invalide. Utilisez un format 24h (00:00 à 23:59).",
+                "❌ Invalid time. Use 24h format (00:00 to 23:59).",
                 reply_markup=InlineKeyboardMarkup([[
-                    InlineKeyboardButton("↩️ Retour", callback_data="schedule_send")
+                    InlineKeyboardButton("↩️ Back", callback_data="schedule_send")
                 ]])
             )
             return SCHEDULE_SEND
@@ -1421,9 +2154,9 @@ async def handle_schedule_time(update: Update, context: ContextTypes.DEFAULT_TYP
         # Vérifier que l'heure n'est pas dans le passé
         if target_date_local <= local_now:
             await update.message.reply_text(
-                "❌ L'heure sélectionnée est déjà passée. Choisissez une heure future.",
+                "❌ The selected time has already passed. Choose a future time.",
                 reply_markup=InlineKeyboardMarkup([[
-                    InlineKeyboardButton("↩️ Retour", callback_data="schedule_send")
+                    InlineKeyboardButton("↩️ Back", callback_data="schedule_send")
                 ]])
             )
             return SCHEDULE_SEND
@@ -1446,7 +2179,7 @@ async def handle_schedule_time(update: Update, context: ContextTypes.DEFAULT_TYP
             # Mode création normale : utiliser le canal sélectionné
             selected_channel = context.user_data.get("selected_channel", {})
             channel_username = selected_channel.get("username")
-            channel_name = selected_channel.get("name", "Canal inconnu")
+            channel_name = selected_channel.get("name", "Unknown channel")
             
             logger.info(f"🔍 Mode création: selected_channel={selected_channel}")
             
@@ -1803,7 +2536,7 @@ async def handle_cancel_post(update: Update, context: ContextTypes.DEFAULT_TYPE)
         keyboard = [
             [
                 InlineKeyboardButton("✅ Oui, annuler", callback_data="confirm_cancel"),
-                InlineKeyboardButton("❌ Non, garder", callback_data="retour")
+                InlineKeyboardButton("❌ No, keep", callback_data="retour")
             ]
         ]
 
@@ -2164,24 +2897,24 @@ async def confirm_delete_channel(update: Update, context: ContextTypes.DEFAULT_T
         
         if success:
             await query.edit_message_text(
-                "✅ Canal supprimé avec succès!",
+                "✅ Channel deleted successfully!",
                 reply_markup=InlineKeyboardMarkup([[
-                    InlineKeyboardButton("↩️ Retour", callback_data="manage_channels")
+                    InlineKeyboardButton("↩️ Back", callback_data="manage_channels")
                 ]])
             )
         else:
             await query.edit_message_text(
-                "❌ Erreur lors de la suppression du canal.",
+                "❌ Error deleting channel.",
                 reply_markup=InlineKeyboardMarkup([[
-                    InlineKeyboardButton("↩️ Retour", callback_data="manage_channels")
+                    InlineKeyboardButton("↩️ Back", callback_data="manage_channels")
                 ]])
             )
     except Exception as e:
-        logger.error(f"Erreur lors de la suppression du canal: {e}")
+        logger.error(f"Error deleting channel: {e}")
         await query.edit_message_text(
-            "❌ Une erreur est survenue.",
+            "❌ An error occurred.",
             reply_markup=InlineKeyboardMarkup([[
-                InlineKeyboardButton("↩️ Retour", callback_data="manage_channels")
+                InlineKeyboardButton("↩️ Back", callback_data="manage_channels")
             ]])
         )
     
@@ -2222,7 +2955,7 @@ async def handle_timezone_settings(update: Update, context: ContextTypes.DEFAULT
     
     # Bouton pour saisir manuellement
     keyboard.append([InlineKeyboardButton("✏️ Saisir manuellement", callback_data="manual_timezone")])
-    keyboard.append([InlineKeyboardButton("↩️ Retour", callback_data="custom_settings")])
+    keyboard.append([InlineKeyboardButton("↩️ Back", callback_data="custom_settings")])
     
     # Obtenir l'heure actuelle dans le fuseau de l'utilisateur
     from datetime import datetime
@@ -2265,9 +2998,9 @@ async def handle_set_timezone(update: Update, context: ContextTypes.DEFAULT_TYPE
         import pytz
         if timezone_code not in pytz.all_timezones:
             await query.edit_message_text(
-                "❌ Fuseau horaire invalide.",
+                "❌ Invalid timezone.",
                 reply_markup=InlineKeyboardMarkup([[
-                    InlineKeyboardButton("↩️ Retour", callback_data="timezone_settings")
+                    InlineKeyboardButton("↩️ Back", callback_data="timezone_settings")
                 ]])
             )
             return SETTINGS
@@ -2293,18 +3026,18 @@ async def handle_set_timezone(update: Update, context: ContextTypes.DEFAULT_TYPE
             )
         else:
             await query.edit_message_text(
-                "❌ Erreur lors de la mise à jour du fuseau horaire.",
+                "❌ Error updating timezone.",
                 reply_markup=InlineKeyboardMarkup([[
-                    InlineKeyboardButton("↩️ Retour", callback_data="timezone_settings")
+                    InlineKeyboardButton("↩️ Back", callback_data="timezone_settings")
                 ]])
             )
             
     except Exception as e:
-        logger.error(f"Erreur lors de la mise à jour du fuseau horaire : {e}")
+        logger.error(f"Error updating timezone: {e}")
         await query.edit_message_text(
-            "❌ Une erreur est survenue.",
+            "❌ An error occurred.",
             reply_markup=InlineKeyboardMarkup([[
-                InlineKeyboardButton("↩️ Retour", callback_data="timezone_settings")
+                InlineKeyboardButton("↩️ Back", callback_data="timezone_settings")
             ]])
         )
     

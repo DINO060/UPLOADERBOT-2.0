@@ -221,11 +221,11 @@ async def send_scheduled_file(post: Dict[str, Any], app: Optional[Application] =
                 has_name = 'name' in ch_cols
                 has_title = 'title' in ch_cols
                 if has_name and has_title:
-                    channel_name_expr = "COALESCE(c.name, c.title) AS channel_name"
-                elif has_name:
-                    channel_name_expr = "c.name AS channel_name"
+                    channel_name_expr = "COALESCE(c.title, c.name) AS channel_name"
                 elif has_title:
                     channel_name_expr = "c.title AS channel_name"
+                elif has_name:
+                    channel_name_expr = "c.name AS channel_name"
                 else:
                     channel_name_expr = "c.username AS channel_name"
 
@@ -236,8 +236,8 @@ async def send_scheduled_file(post: Dict[str, Any], app: Optional[Application] =
                         SELECT p.id,
                                COALESCE(NULLIF(p.post_type, ''), p.type) AS post_type,
                                p.content, p.caption, p.scheduled_time,
-                               COALESCE(c.name, c.username, p.channel_id) AS channel_name, 
-                               COALESCE(c.username, p.channel_id) AS channel_username, 
+                               COALESCE(c.title, c.username, p.channel_id) AS channel_name,
+                               COALESCE(c.username, p.channel_id) AS channel_username,
                                p.buttons, p.reactions
                         FROM posts p
                         LEFT JOIN channels c ON (p.channel_id = c.id OR p.channel_id = c.username OR p.channel_id = '@' || c.username)
@@ -249,8 +249,8 @@ async def send_scheduled_file(post: Dict[str, Any], app: Optional[Application] =
                         f"""
                         SELECT p.id, p.post_type AS post_type,
                                p.content, p.caption, p.scheduled_time,
-                               COALESCE(c.name, c.username, p.channel_id) AS channel_name, 
-                               COALESCE(c.username, p.channel_id) AS channel_username, 
+                               COALESCE(c.title, c.username, p.channel_id) AS channel_name,
+                               COALESCE(c.username, p.channel_id) AS channel_username,
                                p.buttons, p.reactions
                         FROM posts p
                         LEFT JOIN channels c ON (p.channel_id = c.id OR p.channel_id = c.username OR p.channel_id = '@' || c.username)
@@ -263,7 +263,7 @@ async def send_scheduled_file(post: Dict[str, Any], app: Optional[Application] =
                         f"""
                         SELECT p.id, p.type AS post_type,
                                p.content, p.caption, p.scheduled_time,
-                               COALESCE(c.name, c.username, p.channel_id) AS channel_name, 
+                               COALESCE(c.title, c.username, p.channel_id) AS channel_name,
                                COALESCE(c.username, p.channel_id) AS channel_username, 
                                p.buttons, p.reactions
                         FROM posts p

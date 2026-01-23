@@ -25,9 +25,7 @@ WELCOME_TEXT = (
     "/addchannel - Add a new channel (Name @username or just @username)\n"
     "/settings - Open settings\n\n"
     "🛠 Admin commands:\n"
-    "/addfsub - Add forced-subscription channels (admin)\n"
-    "/delfsub - Delete forced-subscription channels (admin)\n"
-    "/channels - List forced-subscription channels (admin)\n"
+    "/adm - Admin panel\n"
     "/status - Bot status\n"
 )
 
@@ -69,9 +67,17 @@ class CommandHandlers:
         keyboard = [
             [InlineKeyboardButton("📝 New post", callback_data="create_publication")],
             [InlineKeyboardButton("📅 Scheduled posts", callback_data="planifier_post")],
-            [InlineKeyboardButton("📊 Statistics", callback_data="channel_stats")],
             [InlineKeyboardButton("⚙️ Settings", callback_data="settings")]
         ]
+
+        # Add redirect buttons from admin config
+        try:
+            from bot import get_redirect_buttons_keyboard
+            redirect_buttons = await get_redirect_buttons_keyboard()
+            keyboard.extend(redirect_buttons)
+        except Exception:
+            pass
+
         reply_markup = InlineKeyboardMarkup(keyboard)
 
         # Envoyer le message avec le clavier
@@ -250,10 +256,9 @@ class CommandHandlers:
             "It provides an intuitive interface with buttons to automate your publications.\n\n"
 
             "🔹 Main menu\n"
-            "The bot shows four main options at startup:\n"
+            "The bot shows three main options at startup:\n"
             "• 📝 New post - Create a new post. Select the target channel, then send your content (text, photo, video or document). The bot accepts up to 24 files per post.\n"
             "• 📅 Scheduled posts - View all your scheduled posts. You can see the planned send time and edit or cancel each post individually.\n"
-            "• 📊 Statistics - Feature under development.\n"
             "• ⚙️ Settings - Configure the bot, including channel management, timezone and custom thumbnails.\n\n"
 
             "🔧 Post editing features\n"
@@ -397,6 +402,45 @@ class CommandHandlers:
         )
         
         return SETTINGS
+
+    async def adm(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+        """Admin panel - /adm command (admin only)"""
+        from config.settings import bot_config
+
+        user_id = update.effective_user.id
+        admin_ids = bot_config.get("admin_ids", [])
+
+        # Check if user is admin
+        if user_id not in admin_ids:
+            await update.message.reply_text("❌ You don't have permission to use this command.")
+            return MAIN_MENU
+
+        # Admin panel keyboard
+        keyboard = [
+            [InlineKeyboardButton("📢 Broadcast", callback_data="adm_broadcast")],
+            [InlineKeyboardButton("👥 Force Join Channels", callback_data="adm_fsub")],
+            [InlineKeyboardButton("🚫 Ban/Unban User", callback_data="adm_ban")],
+            [InlineKeyboardButton("📊 Bot Stats", callback_data="adm_stats")],
+            [InlineKeyboardButton("🔗 Short Links Config", callback_data="adm_shortlinks")],
+            [InlineKeyboardButton("↩️ Main Menu", callback_data="main_menu")]
+        ]
+
+        # Get some quick stats
+        total_users = self.db_manager.get_total_users() if hasattr(self.db_manager, 'get_total_users') else "N/A"
+
+        admin_text = (
+            "🛠 **Admin Panel**\n\n"
+            f"👥 Total users: `{total_users}`\n\n"
+            "Select an option below:"
+        )
+
+        await update.message.reply_text(
+            admin_text,
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode="Markdown"
+        )
+
+        return MAIN_MENU
 
 
 # Fonction d'erreur générique pour les commandes

@@ -668,6 +668,48 @@ class DatabaseManager:
             logger.warning(f"get_total_users failed: {e}")
             return 0
 
+    def get_all_user_ids(self) -> list[int]:
+        """Returns a list of all distinct user IDs from the database."""
+        try:
+            cursor = self.connection.cursor()
+            user_ids = set()
+
+            # Prefer channel_members (new schema) for user ownership
+            try:
+                cursor.execute("SELECT DISTINCT user_id FROM channel_members")
+                for row in cursor.fetchall():
+                    if row and row[0] is not None:
+                        user_ids.add(int(row[0]))
+            except sqlite3.Error:
+                pass
+
+            # Other user-scoped tables
+            for table in ("user_timezones", "channel_thumbnails", "user_usage"):
+                try:
+                    cursor.execute(f"SELECT DISTINCT user_id FROM {table}")
+                    for row in cursor.fetchall():
+                        if row and row[0] is not None:
+                            user_ids.add(int(row[0]))
+                except sqlite3.Error:
+                    pass
+
+            # Legacy: only read channels.user_id if the column exists
+            try:
+                cursor.execute("PRAGMA table_info(channels)")
+                columns = [col[1] for col in cursor.fetchall()]
+                if "user_id" in columns:
+                    cursor.execute("SELECT DISTINCT user_id FROM channels")
+                    for row in cursor.fetchall():
+                        if row and row[0] is not None:
+                            user_ids.add(int(row[0]))
+            except sqlite3.Error:
+                pass
+
+            return list(user_ids)
+        except Exception as e:
+            logger.warning(f"get_all_user_ids failed: {e}")
+            return []
+
     def set_channel_tag(self, username: str, user_id: int, tag: str) -> bool:
         """Définit le tag d'un canal"""
         try:

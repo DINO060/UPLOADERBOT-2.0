@@ -28,17 +28,228 @@ logger = logging.getLogger(__name__)
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """
     Gère les messages texte dans l'état MAIN_MENU.
-    
+
     Args:
         update: L'objet Update de Telegram
         context: Le contexte de la conversation
-        
+
     Returns:
         int: L'état suivant de la conversation
     """
     try:
         text = update.message.text
-        
+
+        # Handle admin: waiting for broadcast message
+        if context.user_data.get('waiting_broadcast'):
+            context.user_data.pop('waiting_broadcast', None)
+
+            # Store the broadcast data
+            broadcast_data = {
+                'type': 'text',
+                'text': text
+            }
+            context.user_data['broadcast_data'] = broadcast_data
+
+            # Ask for confirmation
+            from database.manager import DatabaseManager
+            db = DatabaseManager()
+            total_users = db.get_total_users()
+
+            await update.message.reply_text(
+                f"📢 **Broadcast Preview**\n\n"
+                f"━━━━━━━━━━━━━━━━━━\n"
+                f"{text}\n"
+                f"━━━━━━━━━━━━━━━━━━\n\n"
+                f"👥 Will be sent to: `{total_users}` users\n\n"
+                f"⚠️ **Confirm broadcast?**",
+                parse_mode="Markdown",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("✅ Send Now", callback_data="adm_broadcast_confirm")],
+                    [InlineKeyboardButton("❌ Cancel", callback_data="adm_broadcast_cancel")]
+                ])
+            )
+            return MAIN_MENU
+
+        # Handle admin: waiting for fsub channel to add
+        if context.user_data.get('waiting_fsub_add'):
+            context.user_data.pop('waiting_fsub_add', None)
+
+            from bot import load_fj_channels, save_fj_channels, fj_lock, _normalize_channel
+            channel = _normalize_channel(text.strip())
+
+            if not channel:
+                await update.message.reply_text(
+                    "❌ Invalid channel format.\n\n"
+                    "Use: `@channel` or `-100123456789`",
+                    parse_mode="Markdown",
+                    reply_markup=InlineKeyboardMarkup([
+                        [InlineKeyboardButton("↩️ Back", callback_data="adm_fsub")]
+                    ])
+                )
+                return MAIN_MENU
+
+            async with fj_lock:
+                channels = await load_fj_channels()
+                if channel in channels:
+                    await update.message.reply_text(
+                        f"ℹ️ Channel `{channel}` already exists.",
+                        parse_mode="Markdown",
+                        reply_markup=InlineKeyboardMarkup([
+                            [InlineKeyboardButton("↩️ Back", callback_data="adm_fsub")]
+                        ])
+                    )
+                else:
+                    channels.append(channel)
+                    await save_fj_channels(channels)
+                    await update.message.reply_text(
+                        f"✅ Channel `{channel}` added!",
+                        parse_mode="Markdown",
+                        reply_markup=InlineKeyboardMarkup([
+                            [InlineKeyboardButton("➕ Add Another", callback_data="adm_fsub_add")],
+                            [InlineKeyboardButton("↩️ Back", callback_data="adm_fsub")]
+                        ])
+                    )
+            return MAIN_MENU
+
+        # Handle admin: waiting for user ID to ban
+        if context.user_data.get('waiting_ban_user'):
+            context.user_data.pop('waiting_ban_user', None)
+
+            # Try to parse user ID
+            try:
+                user_id_to_ban = int(text.strip())
+            except ValueError:
+                await update.message.reply_text(
+                    "❌ Invalid user ID. Please send a numeric ID.\n\n"
+                    "Example: `123456789`",
+                    parse_mode="Markdown",
+                    reply_markup=InlineKeyboardMarkup([
+                        [InlineKeyboardButton("🔄 Try Again", callback_data="adm_ban_user")],
+                        [InlineKeyboardButton("↩️ Back", callback_data="adm_ban")]
+                    ])
+                )
+                return MAIN_MENU
+
+            # Check if user is admin (can't ban admins)
+            from config.settings import bot_config
+            admin_ids = bot_config.get("admin_ids", [])
+            if user_id_to_ban in admin_ids:
+                await update.message.reply_text(
+                    "❌ Cannot ban an admin!",
+                    reply_markup=InlineKeyboardMarkup([
+                        [InlineKeyboardButton("↩️ Back", callback_data="adm_ban")]
+                    ])
+                )
+                return MAIN_MENU
+
+            # Ban the user
+            from bot import ban_user, is_user_banned
+
+            if await is_user_banned(user_id_to_ban):
+                await update.message.reply_text(
+                    f"ℹ️ User `{user_id_to_ban}` is already banned.",
+                    parse_mode="Markdown",
+                    reply_markup=InlineKeyboardMarkup([
+                        [InlineKeyboardButton("↩️ Back", callback_data="adm_ban")]
+                    ])
+                )
+                return MAIN_MENU
+
+            success = await ban_user(
+                user_id=user_id_to_ban,
+                reason="Banned via admin panel",
+                banned_by=update.effective_user.id
+            )
+
+            if success:
+                await update.message.reply_text(
+                    f"✅ User `{user_id_to_ban}` has been banned!",
+                    parse_mode="Markdown",
+                    reply_markup=InlineKeyboardMarkup([
+                        [InlineKeyboardButton("🚫 Ban Another", callback_data="adm_ban_user")],
+                        [InlineKeyboardButton("↩️ Back", callback_data="adm_ban")]
+                    ])
+                )
+            else:
+                await update.message.reply_text(
+                    "❌ Failed to ban user.",
+                    reply_markup=InlineKeyboardMarkup([
+                        [InlineKeyboardButton("↩️ Back", callback_data="adm_ban")]
+                    ])
+                )
+            return MAIN_MENU
+
+        # Handle admin: waiting for redirect button (text | url)
+        if context.user_data.get('waiting_redirect_button'):
+            context.user_data.pop('waiting_redirect_button', None)
+
+            # Parse format: "Button Text | https://url.com"
+            if "|" not in text:
+                await update.message.reply_text(
+                    "❌ Invalid format!\n\n"
+                    "Use: `Button Text | https://example.com`",
+                    parse_mode="Markdown",
+                    reply_markup=InlineKeyboardMarkup([
+                        [InlineKeyboardButton("🔄 Try Again", callback_data="adm_redirect_add")],
+                        [InlineKeyboardButton("↩️ Back", callback_data="adm_redirect_buttons")]
+                    ])
+                )
+                return MAIN_MENU
+
+            parts = text.split("|", 1)
+            button_text = parts[0].strip()
+            button_url = parts[1].strip()
+
+            # Validate
+            if not button_text:
+                await update.message.reply_text(
+                    "❌ Button text cannot be empty!",
+                    reply_markup=InlineKeyboardMarkup([
+                        [InlineKeyboardButton("🔄 Try Again", callback_data="adm_redirect_add")],
+                        [InlineKeyboardButton("↩️ Back", callback_data="adm_redirect_buttons")]
+                    ])
+                )
+                return MAIN_MENU
+
+            if not button_url.startswith(("http://", "https://", "t.me/", "tg://")):
+                await update.message.reply_text(
+                    "❌ Invalid URL! Must start with http://, https://, t.me/ or tg://",
+                    reply_markup=InlineKeyboardMarkup([
+                        [InlineKeyboardButton("🔄 Try Again", callback_data="adm_redirect_add")],
+                        [InlineKeyboardButton("↩️ Back", callback_data="adm_redirect_buttons")]
+                    ])
+                )
+                return MAIN_MENU
+
+            # Fix t.me URLs
+            if button_url.startswith("t.me/"):
+                button_url = "https://" + button_url
+
+            # Add button
+            from bot import add_redirect_button
+            success = await add_redirect_button(button_text, button_url)
+
+            if success:
+                await update.message.reply_text(
+                    f"✅ Button added!\n\n"
+                    f"📝 Text: `{button_text}`\n"
+                    f"🔗 URL: `{button_url}`",
+                    parse_mode="Markdown",
+                    reply_markup=InlineKeyboardMarkup([
+                        [InlineKeyboardButton("➕ Add Another", callback_data="adm_redirect_add")],
+                        [InlineKeyboardButton("👁 Preview", callback_data="adm_redirect_preview")],
+                        [InlineKeyboardButton("↩️ Back", callback_data="adm_redirect_buttons")]
+                    ])
+                )
+            else:
+                await update.message.reply_text(
+                    "ℹ️ This button already exists.",
+                    reply_markup=InlineKeyboardMarkup([
+                        [InlineKeyboardButton("↩️ Back", callback_data="adm_redirect_buttons")]
+                    ])
+                )
+            return MAIN_MENU
+
         # Les boutons ReplyKeyboard sont maintenant gérés par le handler contextuel
         # Ce handler ne traite que le texte générique - rediriger vers menu principal
         keyboard = [
@@ -48,7 +259,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
             [InlineKeyboardButton("❓ Help", callback_data="help")]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
-        
+
         await update.message.reply_text(
             "Main menu:",
             reply_markup=reply_markup
@@ -80,6 +291,63 @@ async def handle_media(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
         MessageError: Si le média n'est pas supporté
     """
     try:
+        # Handle admin: waiting for broadcast media
+        if context.user_data.get('waiting_broadcast'):
+            context.user_data.pop('waiting_broadcast', None)
+
+            broadcast_data = {}
+
+            if update.message.photo:
+                broadcast_data = {
+                    'type': 'photo',
+                    'file_id': update.message.photo[-1].file_id,
+                    'caption': update.message.caption or ''
+                }
+            elif update.message.video:
+                broadcast_data = {
+                    'type': 'video',
+                    'file_id': update.message.video.file_id,
+                    'caption': update.message.caption or ''
+                }
+            elif update.message.document:
+                broadcast_data = {
+                    'type': 'document',
+                    'file_id': update.message.document.file_id,
+                    'caption': update.message.caption or ''
+                }
+            else:
+                await update.message.reply_text(
+                    "❌ Unsupported media type.",
+                    reply_markup=InlineKeyboardMarkup([
+                        [InlineKeyboardButton("🔄 Try Again", callback_data="adm_broadcast")],
+                        [InlineKeyboardButton("↩️ Back", callback_data="adm_panel")]
+                    ])
+                )
+                return MAIN_MENU
+
+            context.user_data['broadcast_data'] = broadcast_data
+
+            # Ask for confirmation
+            from database.manager import DatabaseManager
+            db = DatabaseManager()
+            total_users = db.get_total_users()
+
+            caption_preview = broadcast_data.get('caption', '') or '_No caption_'
+
+            await update.message.reply_text(
+                f"📢 **Broadcast Preview**\n\n"
+                f"📎 Type: `{broadcast_data['type']}`\n"
+                f"📝 Caption: {caption_preview[:100]}{'...' if len(caption_preview) > 100 else ''}\n\n"
+                f"👥 Will be sent to: `{total_users}` users\n\n"
+                f"⚠️ **Confirm broadcast?**",
+                parse_mode="Markdown",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("✅ Send Now", callback_data="adm_broadcast_confirm")],
+                    [InlineKeyboardButton("❌ Cancel", callback_data="adm_broadcast_cancel")]
+                ])
+            )
+            return MAIN_MENU
+
         if update.message.photo:
             context.user_data['media'] = update.message.photo[-1].file_id
             context.user_data['media_type'] = 'photo'

@@ -79,6 +79,9 @@ from i18n import SUPPORTED, set_user_lang, get_user_lang, t
 from telegram.request import HTTPXRequest
 from telegram.ext import ApplicationBuilder
 
+# Import admin_core module
+from admin_core import setup_admin, AdminConfig, get_manager
+
 load_dotenv()
 
 # Option pour réduire les httpx.ReadError
@@ -276,6 +279,137 @@ async def list_fsubs(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("📋 Force-join:\n" + "\n".join(f"• {x}" for x in ch))
 
 
+# --- Ban System ---
+BANNED_USERS_PATH = BASE_DIR / "data" / "banned_users.json"
+ban_lock = asyncio.Lock()
+
+def _ensure_banned_file():
+    BANNED_USERS_PATH.parent.mkdir(parents=True, exist_ok=True)
+    if not BANNED_USERS_PATH.exists():
+        BANNED_USERS_PATH.write_text('{"banned": []}', encoding="utf-8")
+
+async def load_banned_users() -> list[dict]:
+    """Load banned users list"""
+    _ensure_banned_file()
+    try:
+        data = json.loads(BANNED_USERS_PATH.read_text(encoding="utf-8"))
+        return data.get("banned", [])
+    except Exception:
+        return []
+
+async def save_banned_users(banned: list[dict]) -> None:
+    """Save banned users list"""
+    _ensure_banned_file()
+    data = {"banned": banned}
+    BANNED_USERS_PATH.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+
+async def is_user_banned(user_id: int) -> bool:
+    """Check if user is banned"""
+    banned = await load_banned_users()
+    for b in banned:
+        if b.get("user_id") == user_id:
+            return True
+    return False
+
+async def ban_user(user_id: int, reason: str = "No reason", banned_by: int = 0) -> bool:
+    """Ban a user"""
+    async with ban_lock:
+        banned = await load_banned_users()
+        # Check if already banned
+        for b in banned:
+            if b.get("user_id") == user_id:
+                return False  # Already banned
+
+        banned.append({
+            "user_id": user_id,
+            "reason": reason,
+            "banned_by": banned_by,
+            "banned_at": datetime.now(timezone.utc).isoformat()
+        })
+        await save_banned_users(banned)
+        return True
+
+async def unban_user(user_id: int) -> bool:
+    """Unban a user"""
+    async with ban_lock:
+        banned = await load_banned_users()
+        new_banned = [b for b in banned if b.get("user_id") != user_id]
+        if len(new_banned) == len(banned):
+            return False  # User was not banned
+        await save_banned_users(new_banned)
+        return True
+
+async def get_banned_user_info(user_id: int) -> dict | None:
+    """Get info about a banned user"""
+    banned = await load_banned_users()
+    for b in banned:
+        if b.get("user_id") == user_id:
+            return b
+    return None
+
+
+# --- Redirect Buttons System ---
+REDIRECT_BUTTONS_PATH = BASE_DIR / "data" / "redirect_buttons.json"
+redirect_lock = asyncio.Lock()
+
+def _ensure_redirect_buttons_file():
+    REDIRECT_BUTTONS_PATH.parent.mkdir(parents=True, exist_ok=True)
+    if not REDIRECT_BUTTONS_PATH.exists():
+        REDIRECT_BUTTONS_PATH.write_text('{"buttons": []}', encoding="utf-8")
+
+async def load_redirect_buttons() -> list[dict]:
+    """Load redirect buttons list"""
+    _ensure_redirect_buttons_file()
+    try:
+        data = json.loads(REDIRECT_BUTTONS_PATH.read_text(encoding="utf-8"))
+        return data.get("buttons", [])
+    except Exception:
+        return []
+
+async def save_redirect_buttons(buttons: list[dict]) -> None:
+    """Save redirect buttons list"""
+    _ensure_redirect_buttons_file()
+    data = {"buttons": buttons}
+    REDIRECT_BUTTONS_PATH.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+
+async def add_redirect_button(text: str, url: str) -> bool:
+    """Add a redirect button"""
+    async with redirect_lock:
+        buttons = await load_redirect_buttons()
+        # Check if already exists
+        for b in buttons:
+            if b.get("text") == text and b.get("url") == url:
+                return False
+        buttons.append({
+            "text": text,
+            "url": url,
+            "created_at": datetime.now(timezone.utc).isoformat()
+        })
+        await save_redirect_buttons(buttons)
+        return True
+
+async def remove_redirect_button(index: int) -> bool:
+    """Remove a redirect button by index"""
+    async with redirect_lock:
+        buttons = await load_redirect_buttons()
+        if 0 <= index < len(buttons):
+            buttons.pop(index)
+            await save_redirect_buttons(buttons)
+            return True
+        return False
+
+async def get_redirect_buttons_keyboard() -> list[list]:
+    """Get redirect buttons as InlineKeyboardButton list for use in messages"""
+    buttons = await load_redirect_buttons()
+    keyboard = []
+    for b in buttons:
+        text = b.get("text", "Button")
+        url = b.get("url", "")
+        if text and url:
+            keyboard.append([InlineKeyboardButton(text, url=url)])
+    return keyboard
+
+
 # --- /status (publique) ---
 def _uptime_str() -> str:
     delta = datetime.now(timezone.utc) - START_TIME
@@ -430,13 +564,49 @@ async def is_user_in_required_channels(
 
 
 async def require_fsub_or_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
-    """Call at the start of sensitive/public commands to enforce f-sub."""
+    """Call at the start of sensitive/public commands to enforce f-sub and ban check."""
     user = update.effective_user
     if not user:
         return False
-    # admins bypass f-sub
+
+    # Check if user is banned FIRST (using admin_core if available, fallback to local)
+    user_is_banned = False
+    ban_reason = "No reason provided"
+
+    # Try admin_core database first
+    admin_db = context.bot_data.get("admin_db")
+    if admin_db:
+        try:
+            is_banned_result, reason = admin_db.is_banned(user.id)
+            if is_banned_result:
+                user_is_banned = True
+                ban_reason = reason or "No reason provided"
+        except Exception:
+            pass
+
+    # Fallback to local JSON storage
+    if not user_is_banned:
+        if await is_user_banned(user.id):
+            user_is_banned = True
+            ban_info = await get_banned_user_info(user.id)
+            ban_reason = ban_info.get('reason', 'No reason provided') if ban_info else 'No reason provided'
+
+    if user_is_banned:
+        await update.effective_message.reply_text(
+            f"🚫 **You are banned from using this bot.**\n\n"
+            f"📝 Reason: {ban_reason}\n\n"
+            f"If you believe this is a mistake, contact the administrator.",
+            parse_mode="Markdown"
+        )
+        return False
+
+    # admins bypass f-sub (check both sources)
+    admin_config = context.bot_data.get("admin_config")
+    if admin_config and admin_config.is_admin(user.id):
+        return True
     if is_admin(user.id):
         return True
+
     ok, missing = await is_user_in_required_channels(context, user.id)
     if ok:
         return True
@@ -1050,26 +1220,26 @@ async def handle_view_thumbnail(update, context):
             )
             
             keyboard = [
-                [InlineKeyboardButton("🔄 Changer", callback_data="add_thumbnail")],
-                [InlineKeyboardButton("🗑️ Supprimer", callback_data="delete_thumbnail")],
-                [InlineKeyboardButton("↩️ Retour", callback_data="thumbnail_menu")]
+                [InlineKeyboardButton("🔄 Change", callback_data="add_thumbnail")],
+                [InlineKeyboardButton("🗑️ Delete", callback_data="delete_thumbnail")],
+                [InlineKeyboardButton("↩️ Back", callback_data="thumbnail_menu")]
             ]
             
             await query.message.reply_text(
-                "Que voulez-vous faire avec ce thumbnail?",
+                "What would you like to do with this thumbnail?",
                 reply_markup=InlineKeyboardMarkup(keyboard)
             )
         except Exception as e:
-            logger.error(f"Erreur lors de l'affichage du thumbnail: {e}")
+            logger.error(f"Error displaying thumbnail: {e}")
             await query.edit_message_text(
-                "❌ Impossible d'afficher le thumbnail.",
+                "❌ Unable to display thumbnail.",
                 reply_markup=InlineKeyboardMarkup([[
                     InlineKeyboardButton("↩️ Retour", callback_data="thumbnail_menu")
                 ]])
             )
     else:
         await query.edit_message_text(
-            "❌ Aucun thumbnail enregistré pour ce canal.",
+            "❌ No thumbnail saved for this channel.",
             reply_markup=InlineKeyboardMarkup([[
                 InlineKeyboardButton("↩️ Retour", callback_data="thumbnail_menu")
             ]])
@@ -1108,7 +1278,7 @@ async def handle_delete_thumbnail(update, context):
         )
     else:
         await query.edit_message_text(
-            "❌ Erreur lors de la suppression du thumbnail.",
+            "❌ Error deleting thumbnail.",
             reply_markup=InlineKeyboardMarkup([[
                 InlineKeyboardButton("↩️ Retour", callback_data="thumbnail_menu")
             ]])
@@ -2018,6 +2188,23 @@ def main():
         # Initialisation des compteurs de réactions globaux
         application.bot_data['reaction_counts'] = {}
 
+        # ============================================================
+        # INTÉGRATION ADMIN_CORE
+        # ============================================================
+        # Créer la configuration admin depuis les variables d'environnement
+        admin_config = AdminConfig.from_env()
+
+        # Fusionner avec les ADMIN_IDS déjà parsés
+        for admin_id in ADMIN_IDS:
+            if admin_id not in admin_config.admin_ids:
+                admin_config.admin_ids.append(admin_id)
+
+        # Initialiser admin_core et obtenir les managers
+        admin_managers = setup_admin(application, admin_config)
+        logger.info(f"✅ Admin Core initialisé avec {len(admin_config.admin_ids)} admin(s)")
+        logger.info(f"   Managers actifs: {', '.join(admin_managers.keys())}")
+        # ============================================================
+
         # Initialisation du scheduler (créer seulement, ne pas démarrer encore)
         application.bot_data['scheduler_manager'] = SchedulerManager()
         logger.info("✅ Scheduler manager créé avec succès")
@@ -2346,6 +2533,9 @@ def main():
 
         # --- Enregistrement des handlers de langue ---
         application.add_handler(CommandHandler("language", command_handlers.language_cmd))
+
+        # --- Enregistrement du handler admin ---
+        application.add_handler(CommandHandler("adm", command_handlers.adm))
 
         # Wrapper /start avec vérification f-sub
         async def start_guarded(update: Update, context: ContextTypes.DEFAULT_TYPE):
