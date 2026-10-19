@@ -2290,8 +2290,12 @@ def main():
                 except Exception as e:
                     logger.warning(f"⚠️ Erreur lors du nettoyage des jobs orphelins: {e}")
                 
-                # Restaurer les posts planifiés
-                await restore_scheduled_posts(app)
+                # Restaurer les posts planifiés (in order; the ones missed while the bot was off go out now)
+                try:
+                    from utils.scheduler_utils import restore_scheduled_posts
+                    await restore_scheduled_posts(app)
+                except Exception as restore_err:
+                    logger.exception(f"❌ Erreur lors de la restauration des posts planifiés: {restore_err}")
                 
                 # Planifier les tâches de maintenance
                 await schedule_maintenance_tasks(app)
@@ -2309,131 +2313,6 @@ def main():
         # Ajouter le callback post_init
         application.post_init = post_init
 
-        # ✅ NOUVEAU : Restaurer les posts planifiés depuis la base de données
-        async def restore_scheduled_posts(app: Application):
-            """Restaure tous les posts planifiés depuis la base de données au démarrage"""
-            try:
-                logger.info("🔄 Restauration des posts planifiés...")
-                
-                # Récupérer tous les posts planifiés non envoyés avec validation des canaux
-                with sqlite3.connect(settings.db_config["path"]) as conn:
-                    cursor = conn.cursor()
-                    cursor.execute("""
-                        SELECT p.id, p.scheduled_time, p.post_type, p.content, p.caption, p.channel_id
-                        FROM posts p
-                        LEFT JOIN channels c ON (p.channel_id = c.id OR p.channel_id = c.username OR p.channel_id = '@' || c.username)
-                        WHERE p.scheduled_time > datetime('now') 
-                        AND (p.status = 'pending' OR p.status IS NULL)
-                        AND p.channel_id IS NOT NULL
-                        AND p.channel_id != ''
-                    """)
-                    scheduled_posts = cursor.fetchall()
-                    
-                if not scheduled_posts:
-                    logger.info("✅ Aucun post planifié à restaurer")
-                    return
-                    
-                restored_count = 0
-                for post_data in scheduled_posts:
-                    try:
-                        post_id, scheduled_time_str, post_type, content, caption, channel_id = post_data
-                        
-                        # ✅ VALIDATION SUPPLÉMENTAIRE : Vérifier que le post existe toujours
-                        cursor.execute("SELECT COUNT(*) FROM posts WHERE id = ?", (post_id,))
-                        if cursor.fetchone()[0] == 0:
-                            logger.warning(f"⚠️ Post {post_id} n'existe plus, ignoré lors de la restauration")
-                            continue
-                        
-                        # Parser la date avec le bon fuseau horaire
-                        from datetime import datetime
-                        import pytz
-                        
-                        # Récupérer le fuseau horaire depuis la base de données
-                        # On cherche l'utilisateur propriétaire du post (schema-aware)
-                        cursor.execute("PRAGMA table_info(channels)")
-                        _cols = [r[1] for r in cursor.fetchall()]
-                        if 'user_id' in _cols:
-                            cursor.execute("SELECT c.user_id FROM channels c WHERE c.id = ?", (channel_id,))
-                            user_result = cursor.fetchone()
-                        else:
-                            # Fallback legacy: récupérer via channel_members si présent
-                            try:
-                                cursor.execute(
-                                    """
-                                    SELECT cm.user_id
-                                    FROM channels c
-                                    JOIN channel_members cm ON cm.channel_id = c.id
-                                    WHERE c.id = ?
-                                    LIMIT 1
-                                    """,
-                                    (channel_id,)
-                                )
-                                user_result = cursor.fetchone()
-                            except Exception:
-                                user_result = None
-                        
-                        if user_result:
-                            user_id = user_result[0]
-                            cursor.execute("SELECT timezone FROM user_timezones WHERE user_id = ?", (user_id,))
-                            tz_result = cursor.fetchone()
-                            user_timezone = tz_result[0] if tz_result else 'Europe/Paris'
-                        else:
-                            user_timezone = 'Europe/Paris'  # Fallback
-                        
-                        scheduled_time = datetime.strptime(scheduled_time_str, '%Y-%m-%d %H:%M:%S')
-                        # Localiser avec le bon fuseau horaire
-                        scheduled_time = pytz.timezone(user_timezone).localize(scheduled_time)
-                        
-                        # Créer le job
-                        job_id = f"post_{post_id}"
-                        
-                        # ✅ CORRECTION : Créer une fonction wrapper synchrone simple
-                        def send_restored_post_job(post_id=post_id):
-                            """Fonction wrapper pour envoyer un post restauré"""
-                            import asyncio
-                            try:
-                                # Créer une nouvelle boucle pour le job
-                                loop = asyncio.new_event_loop()
-                                asyncio.set_event_loop(loop)
-                                
-                                # Fonction asynchrone pour envoyer le post
-                                async def send_post_async():
-                                    from utils.scheduler_utils import send_scheduled_file
-                                    post_dict = {"id": post_id}
-                                    await send_scheduled_file(post_dict, app)
-                                
-                                # Exécuter la fonction asynchrone
-                                loop.run_until_complete(send_post_async())
-                                loop.close()
-                                
-                                logger.info(f"✅ Post {post_id} envoyé avec succès")
-                                
-                            except Exception as job_error:
-                                logger.error(f"❌ Erreur dans le job {post_id}: {job_error}")
-                                logger.exception("Traceback:")
-                        
-                        # Ajouter le job au scheduler avec la fonction wrapper corrigée
-                        app.bot_data['scheduler_manager'].scheduler.add_job(
-                            func=send_restored_post_job,
-                            trigger="date",
-                            run_date=scheduled_time,
-                            id=job_id,
-                            replace_existing=True
-                        )
-                        
-                        restored_count += 1
-                        logger.info(f"✅ Post {post_id} restauré pour {scheduled_time}")
-                        
-                    except Exception as e:
-                        logger.error(f"❌ Erreur lors de la restauration du post {post_id}: {e}")
-                        continue
-                
-                logger.info(f"✅ {restored_count} posts planifiés restaurés avec succès")
-                
-            except Exception as e:
-                logger.error(f"❌ Erreur lors de la restauration des posts planifiés: {e}")
-                logger.exception("Traceback:")
-        
         # Fonction pour planifier les tâches de maintenance 
         async def schedule_maintenance_tasks(app: Application):
             """Planifie les tâches de maintenance automatique"""

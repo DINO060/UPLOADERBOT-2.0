@@ -150,5 +150,12 @@
   "database.get_tag_error": "Erreur lors de la récupération du tag : {error}",
   "database.reset_usage_error": "reset_daily_usage_if_needed erreur : {error}",
   "database.get_usage_error": "get_user_usage erreur : {error}",
-  "config.incomplete": "Configuration incomplète : API_ID, API_HASH et BOT_TOKEN sont requis"
+  "config.incomplete": "Configuration incomplète : API_ID, API_HASH et BOT_TOKEN sont requis",
+  "send.done": "✅ Envoi réussi !\n\n{sent} post(s) envoyé(s) vers {channel}",
+  "send.partial": "⚠️ {sent}/{total} post(s) envoyé(s) vers {channel}",
+  "send.reordered": "🔢 Remis dans l'ordre des épisodes (les fichiers étaient arrivés mélangés).",
+  "send.failed": "❌ Pas envoyés :",
+  "send.failed_kept": "Ils sont gardés : appuie sur « 🚀 Send » pour réessayer.",
+  "schedule.failed": "❌ Un post planifié n'a pas pu être envoyé vers {channel} :\n{error}",
+  "schedule.caught_up": "✅ Le bot était hors ligne : {count} de tes post(s) planifié(s) étaient en retard. Ils partent maintenant, dans l'ordre."
 }

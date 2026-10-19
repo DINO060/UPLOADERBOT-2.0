@@ -6,9 +6,13 @@ import sqlite3
 import asyncio
 import json
 from typing import Dict, Any, Optional
-from datetime import datetime
+from datetime import datetime, timedelta
+import pytz
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.error import BadRequest, NetworkError, RetryAfter
 from telegram.ext import Application
+
+from utils.telegram_retry import send_with_retry
 
 logger = logging.getLogger('SchedulerUtils')
 
@@ -66,6 +70,190 @@ def get_global_application() -> Optional[Application]:
     global _global_application
     logger.info(f"🔍 Récupération application globale: {_global_application is not None}")
     return _global_application
+
+
+# ---------------------------------------------------------------------------------------------------------------
+# Scheduled posts: sent in order, on the bot's own event loop, never silently lost.
+#
+# Each post keeps its own APScheduler job ("post_<id>"), so editing or cancelling one post works as before. But a
+# job does not send by itself: it puts its post in its channel's queue, and one sender per channel sends what is
+# due, lowest id first (= the order the files were sent to the bot). 12 posts planned for 20:00 used to be 12 jobs
+# started at the same second, each in its own thread with its own event loop: whichever finished first was
+# published first.
+# ---------------------------------------------------------------------------------------------------------------
+GATHER_SECONDS = 2.0                 # the jobs of the same minute all fire within this window
+GAP_SECONDS = 1.0                    # between two posts of a channel (as for « send now »)
+RETRY_LATER = timedelta(minutes=5)   # Telegram unreachable: this post and the rest of its queue, again later
+MAX_LATER = 6                        # … at most this many times (30 min), then the post is given up (owner told)
+CATCH_UP = timedelta(hours=24)       # at start-up, a post missed by less than this goes out now, else 'missed'
+STARTUP_DELAY = timedelta(seconds=10)  # … that long after start-up, all the late ones of a channel together
+
+_queues: Dict[str, set] = {}
+_senders: Dict[str, asyncio.Task] = {}
+_later_count: Dict[int, int] = {}
+
+
+class TryLater(Exception):
+    """Telegram could not be reached (after the quick retries): the post is kept and tried again later."""
+
+
+def utc_text(when: datetime) -> str:
+    return when.astimezone(pytz.UTC).strftime('%Y-%m-%d %H:%M:%S')
+
+
+def ensure_schedule_columns(cursor) -> None:
+    """posts.run_at: the UTC time (scheduled_time is in the owner's timezone); posts.owner_id: who scheduled it."""
+    cursor.execute("PRAGMA table_info(posts)")
+    cols = {c[1] for c in cursor.fetchall()}
+    if 'run_at' not in cols:
+        cursor.execute("ALTER TABLE posts ADD COLUMN run_at TEXT")
+    if 'owner_id' not in cols:
+        cursor.execute("ALTER TABLE posts ADD COLUMN owner_id INTEGER")
+
+
+def add_post_job(scheduler, post_id: int, run_date: datetime) -> None:
+    """The job of one scheduled post: a coroutine, so it runs on the bot's loop (not in a thread). A job that
+    starts late (busy bot) still runs: the default was to drop it after 1 second."""
+    scheduler.add_job(run_post_job, trigger="date", run_date=run_date, args=[int(post_id)],
+                      id=f"post_{post_id}", replace_existing=True, misfire_grace_time=3600)
+
+
+def _db_path() -> str:
+    from config import settings
+    return settings.db_config.get("path", "bot.db")
+
+
+async def run_post_job(post_id: int) -> None:
+    """A scheduled post is due: into its channel's queue (a sender is started if none is running)."""
+    with sqlite3.connect(_db_path()) as conn:
+        row = conn.execute("SELECT channel_id FROM posts WHERE id = ?", (post_id,)).fetchone()
+    if not row or row[0] in (None, ''):
+        logger.warning(f"Scheduled post {post_id}: no longer in the database (deleted?)")
+        return
+    channel = str(row[0])
+    _queues.setdefault(channel, set()).add(int(post_id))
+    sender = _senders.get(channel)
+    if sender is None or sender.done():
+        _senders[channel] = asyncio.create_task(_send_queue(channel))
+
+
+async def _send_queue(channel: str) -> None:
+    """Sends the due posts of a channel one by one, lowest id first, until none is left."""
+    await asyncio.sleep(GATHER_SECONDS)
+    queue = _queues.setdefault(channel, set())
+    app = get_global_application()
+    while queue:
+        post_id = min(queue)
+        try:
+            await send_scheduled_file({"id": post_id}, app)
+        except TryLater as e:
+            waiting = sorted(queue)
+            queue.clear()
+            await _later(app, waiting, str(e))
+            return
+        except Exception as e:  # noqa: BLE001
+            logger.exception(f"❌ Scheduled post {post_id}: {e}")
+        queue.discard(post_id)
+        if queue:
+            await asyncio.sleep(GAP_SECONDS)
+
+
+async def _later(app, post_ids, error: str) -> None:
+    """Telegram unreachable: these posts go again in RETRY_LATER, all at the same time (so still in order)."""
+    when = datetime.now(pytz.UTC) + RETRY_LATER
+    manager = get_global_scheduler_manager()
+    for post_id in post_ids:
+        _later_count[post_id] = _later_count.get(post_id, 0) + 1
+        if manager is None or _later_count[post_id] > MAX_LATER:
+            await _give_up(app, post_id, None, error)
+        else:
+            add_post_job(manager.scheduler, post_id, when)
+    logger.warning(f"⏳ Telegram unreachable ({error}): {len(post_ids)} scheduled post(s) again at {when:%H:%M} UTC")
+
+
+async def _tell_owner(app, owner_id, key: str, **values) -> None:
+    if not owner_id or app is None:
+        return
+    try:
+        from i18n import get_user_lang, t
+        await app.bot.send_message(chat_id=owner_id, text=t(get_user_lang(owner_id), key, **values))
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"Could not tell {owner_id} about a scheduled post: {e}")
+
+
+async def _give_up(app, post_id: int, channel, error: str) -> None:
+    """A post that can't be sent (wrong file, bot no longer admin…): marked 'failed', its owner told."""
+    with sqlite3.connect(_db_path()) as conn:
+        ensure_schedule_columns(conn.cursor())
+        conn.execute("UPDATE posts SET status = 'failed' WHERE id = ?", (post_id,))
+        row = conn.execute("SELECT owner_id, channel_id FROM posts WHERE id = ?", (post_id,)).fetchone()
+        conn.commit()
+    _later_count.pop(post_id, None)
+    logger.error(f"❌ Scheduled post {post_id} given up: {error}")
+    if row:
+        await _tell_owner(app, row[0], "schedule.failed", channel=channel or row[1], error=error)
+
+
+def _run_time(cursor, local_text, run_at, owner_id, channel_id) -> Optional[datetime]:
+    """When a post is due, in UTC: run_at, or for a post scheduled before run_at existed, scheduled_time read in its
+    owner's timezone (Europe/Paris when unknown, as before)."""
+    try:
+        if run_at:
+            return pytz.UTC.localize(datetime.strptime(str(run_at)[:19], '%Y-%m-%d %H:%M:%S'))
+        tz_name = None
+        try:
+            owner = owner_id
+            if not owner:
+                row = cursor.execute("SELECT user_id FROM channels WHERE id = ?", (channel_id,)).fetchone()
+                owner = row[0] if row else None
+            if owner:
+                row = cursor.execute("SELECT timezone FROM user_timezones WHERE user_id = ?", (owner,)).fetchone()
+                tz_name = row[0] if row else None
+        except sqlite3.Error:
+            pass
+        local = datetime.strptime(str(local_text)[:19], '%Y-%m-%d %H:%M:%S')
+        return pytz.timezone(tz_name or 'Europe/Paris').localize(local).astimezone(pytz.UTC)
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"Scheduled time unreadable ({local_text!r}, {run_at!r}): {e}")
+        return None
+
+
+async def restore_scheduled_posts(app: Application) -> None:
+    """At start-up every pending post gets its job back. A post whose time passed while the bot was off goes out
+    now if it is less than CATCH_UP late (together with the other late ones of its channel, so in order; its owner
+    is told); an older one is marked 'missed'. (Before, every post whose time had passed was silently forgotten, and
+    the « has it passed » test compared the owner's local time with UTC.)"""
+    scheduler = app.bot_data['scheduler_manager'].scheduler
+    now = datetime.now(pytz.UTC)
+    soon = now + STARTUP_DELAY
+    restored = missed = 0
+    late: Dict[Any, int] = {}
+    with sqlite3.connect(_db_path()) as conn:
+        cursor = conn.cursor()
+        ensure_schedule_columns(cursor)
+        rows = cursor.execute("""
+            SELECT id, scheduled_time, run_at, owner_id, channel_id FROM posts
+            WHERE (status = 'pending' OR status IS NULL) AND scheduled_time IS NOT NULL
+              AND channel_id IS NOT NULL AND channel_id != ''
+            ORDER BY id
+        """).fetchall()
+        for post_id, local_text, run_at, owner_id, channel_id in rows:
+            when = _run_time(cursor, local_text, run_at, owner_id, channel_id)
+            if when is None:
+                continue
+            if when > now:
+                add_post_job(scheduler, post_id, when)
+                restored += 1
+            elif now - when <= CATCH_UP:
+                add_post_job(scheduler, post_id, soon)
+                late[owner_id] = late.get(owner_id, 0) + 1
+            else:
+                cursor.execute("UPDATE posts SET status = 'missed' WHERE id = ?", (post_id,))
+                missed += 1
+        conn.commit()
+    logger.info(f"✅ Scheduled posts: {restored} restored, {sum(late.values())} late ones sent now, {missed} too old (missed)")
+    for owner_id, count in late.items():
+        await _tell_owner(app, owner_id, "schedule.caught_up", count=count)
 
 async def send_scheduled_file(post: Dict[str, Any], app: Optional[Application] = None) -> bool:
     """
@@ -205,9 +393,13 @@ async def send_scheduled_file(post: Dict[str, Any], app: Optional[Application] =
                         resolved_channel = channel_id
                         
                 except Exception as chat_error:
+                    if isinstance(chat_error, (NetworkError, RetryAfter)) and not isinstance(chat_error, BadRequest):
+                        raise TryLater(str(chat_error))      # Telegram unreachable: the channel is not « missing »
                     logger.error(f"❌ Failed to resolve chat {channel_id}: {chat_error}")
                     cursor.execute("UPDATE posts SET status = ? WHERE id = ?", ('missing_channel', post_id))
                     conn.commit()
+                    owner = cursor.execute("SELECT owner_id FROM posts WHERE id = ?", (post_id,)).fetchone()
+                    await _tell_owner(app, owner and owner[0], "schedule.failed", channel=channel_id, error=str(chat_error))
                     return False
                 
                 logger.info(f"✅ Chat resolved: {chat.title} (ID: {chat.id})")
@@ -324,7 +516,9 @@ async def send_scheduled_file(post: Dict[str, Any], app: Optional[Application] =
                 
                 logger.info(f"✅ Post {post_id} data loaded from DB")
                 logger.info(f"📊 Built complete post: {complete_post}")
-                
+
+        except TryLater:
+            raise
         except Exception as db_error:
             logger.error(f"❌ Error fetching post {post_id} data: {db_error}")
             logger.exception("🔍 Full traceback (DB error):")
@@ -429,10 +623,14 @@ async def send_scheduled_file(post: Dict[str, Any], app: Optional[Application] =
             if owner_user_id is not None:
                 from database.manager import DatabaseManager
                 dbm = DatabaseManager()
-                lim = dbm.check_limits(owner_user_id, estimated_size, DAILY_LIMIT_BYTES, COOLDOWN_SECONDS)
+                # No cooldown here: the posts scheduled together go out one after the other (it stopped all but
+                # the first, silently)
+                lim = dbm.check_limits(owner_user_id, estimated_size, DAILY_LIMIT_BYTES, 0)
                 if not lim.get('ok'):
                     if lim.get('reason') == 'daily':
                         logger.warning(f"⛔ Quota journalier atteint pour user {owner_user_id}: {lim}")
+                        await _tell_owner(app, owner_user_id, "schedule.failed", channel=channel,
+                                          error="daily limit reached (2 GB)")
                     elif lim.get('reason') == 'cooldown':
                         logger.warning(f"⏳ Cooldown actif pour user {owner_user_id}: attendre {lim.get('wait_seconds')}s")
                     return False
@@ -568,75 +766,30 @@ async def send_scheduled_file(post: Dict[str, Any], app: Optional[Application] =
         logger.info(f"📤 Reply markup: {reply_markup is not None}")
         
         sent_message = None
+        senders = {
+            "photo": lambda: app.bot.send_photo(chat_id=channel, photo=content, caption=caption, reply_markup=reply_markup),
+            "video": lambda: app.bot.send_video(chat_id=channel, video=content, caption=caption, reply_markup=reply_markup),
+            "document": lambda: app.bot.send_document(chat_id=channel, document=content, caption=caption,
+                                                      reply_markup=reply_markup),
+            "text": lambda: app.bot.send_message(chat_id=channel, text=content, reply_markup=reply_markup),
+        }
+        if post_type not in senders:
+            logger.error(f"❌ Unsupported post type: {post_type}")
+            return False
         try:
-            if post_type == "photo":
-                logger.info("📸 Sending photo...")
-                logger.info(f"📸 Photo ID: {content}")
-                logger.info(f"📸 Caption: {caption}")
-                sent_message = await app.bot.send_photo(
-                    chat_id=channel,
-                    photo=content,
-                    caption=caption,
-                    reply_markup=reply_markup
-                )
-                logger.info(f"📸 Photo sent successfully")
-                
-            elif post_type == "video":
-                logger.info("🎥 Sending video...")
-                logger.info(f"🎥 Video ID: {content}")
-                logger.info(f"🎥 Caption: {caption}")
-                sent_message = await app.bot.send_video(
-                    chat_id=channel,
-                    video=content,
-                    caption=caption,
-                    reply_markup=reply_markup
-                )
-                logger.info(f"🎥 Video sent successfully")
-                
-            elif post_type == "document":
-                logger.info("📄 Sending document...")
-                logger.info(f"📄 Document ID: {content}")
-                logger.info(f"📄 Caption: {caption}")
-                sent_message = await app.bot.send_document(
-                    chat_id=channel,
-                    document=content,
-                    caption=caption,
-                    reply_markup=reply_markup
-                )
-                logger.info(f"📄 Document sent successfully")
-                
-            elif post_type == "text":
-                logger.info("📝 Sending text message...")
-                logger.info(f"📝 Texte: {content[:100]}...")
-                sent_message = await app.bot.send_message(
-                    chat_id=channel,
-                    text=content,
-                    reply_markup=reply_markup
-                )
-                logger.info(f"📝 Text sent successfully")
-                
-            else:
-                logger.error(f"❌ Unsupported post type: {post_type}")
-                return False
-                
-            logger.info(f"📬 Message sent: {sent_message is not None}")
-            if sent_message:
-                logger.info(f"📬 Message ID: {sent_message.message_id}")
-                logger.info(f"📬 Chat ID: {sent_message.chat_id}")
-                
+            # flood control waited for for real, a passing network error tried again
+            sent_message = await send_with_retry(senders[post_type], f"scheduled post {post_id}")
+            logger.info(f"📬 Scheduled post {post_id} sent (message {sent_message.message_id})")
         except Exception as send_error:
-            logger.error(f"❌ Error while sending to {channel}: {send_error}")
-            logger.exception("🔍 Full traceback (send):")
-            
-            # Debug supplémentaire pour les erreurs d'envoi
-            logger.error(f"🔍 Détails de l'erreur d'envoi:")
-            logger.error(f"   Type d'erreur: {type(send_error)}")
-            logger.error(f"   Message d'erreur: {str(send_error)}")
-            
+            if isinstance(send_error, (NetworkError, RetryAfter)) and not isinstance(send_error, BadRequest):
+                raise TryLater(str(send_error))      # Telegram unreachable: kept, tried again in a few minutes
+            logger.exception(f"❌ Error while sending to {channel}: {send_error}")
+            await _give_up(app, post_id, channel, str(send_error))
             return False
 
         if sent_message:
             logger.info(f"✅ Scheduled message sent successfully: {post_id}")
+            _later_count.pop(post_id, None)
 
             # Enregistrer l'usage après envoi
             try:
@@ -678,72 +831,11 @@ async def send_scheduled_file(post: Dict[str, Any], app: Optional[Application] =
         else:
             # Do not delete the post if sending failed
             logger.error(f"❌ Failed to send scheduled message: {post_id}")
-            logger.error(f"❌ sent_message is None")
-            
-            # 🔄 RETRY : Reprogrammer le post pour dans 5 minutes
-            try:
-                from datetime import timedelta
-                import pytz
-                
-                # Calculer la nouvelle heure (dans 5 minutes)
-                new_time = datetime.now(pytz.UTC) + timedelta(minutes=5)
-                logger.info(f"🔄 Rescheduling for {new_time}")
-                
-                # Mettre à jour l'heure dans la base de données
-                from config import settings
-                db_path = settings.db_config.get("path", "bot.db")
-                
-                with sqlite3.connect(db_path) as conn:
-                    cursor = conn.cursor()
-                    cursor.execute(
-                        "UPDATE posts SET scheduled_time = ? WHERE id = ?",
-                        (new_time.strftime('%Y-%m-%d %H:%M:%S'), post_id)
-                    )
-                    conn.commit()
-                
-                logger.warning(f"⚠️ Post {post_id} rescheduled for {new_time} (in 5 minutes)")
-                
-                # Essayer de reprogrammer le job si possible
-                try:
-                    # Récupérer le scheduler manager global
-                    scheduler_manager = get_global_scheduler_manager()
-                    if scheduler_manager:
-                        job_id = f"post_{post_id}"
-                        
-                        # Supprimer l'ancien job s'il existe
-                        if scheduler_manager.scheduler.get_job(job_id):
-                            scheduler_manager.scheduler.remove_job(job_id)
-                            logger.info(f"🗑️ Old job {job_id} removed")
-                        
-                        # Créer un nouveau job avec retry
-                        def retry_send_post():
-                            import asyncio
-                            loop = asyncio.new_event_loop()
-                            asyncio.set_event_loop(loop)
-                            app = get_global_application()
-                            loop.run_until_complete(send_scheduled_file(complete_post, app))
-                            loop.close()
-                        
-                        scheduler_manager.scheduler.add_job(
-                            func=retry_send_post,
-                            trigger="date",
-                            run_date=new_time,
-                            id=job_id,
-                            replace_existing=True
-                        )
-                        logger.info(f"✅ Retry job created for {new_time}")
-                        
-                except Exception as retry_error:
-                    logger.error(f"❌ Unable to reschedule job: {retry_error}")
-                    logger.exception("🔍 Reschedule job traceback:")
-                    
-            except Exception as retry_error:
-                logger.error(f"❌ Error while rescheduling: {retry_error}")
-                logger.exception("🔍 Rescheduling traceback:")
-            
-            logger.info("💥 === END send_scheduled_file - FAILURE (retry scheduled) ===")
+            await _give_up(app, post_id, channel, "Telegram returned nothing")
             return False
 
+    except TryLater:
+        raise
     except Exception as e:
         logger.error(f"❌ General error while sending scheduled file: {e}")
         logger.exception("🔍 Full traceback (general):")

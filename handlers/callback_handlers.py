@@ -2162,7 +2162,8 @@ async def handle_schedule_time(update: Update, context: ContextTypes.DEFAULT_TYP
             return SCHEDULE_SEND
 
         success_count = 0
-        
+        reordered = False
+
         # Vérifier si on modifie un post existant
         editing_post_id = context.user_data.get('editing_post_id')
         current_scheduled_post = context.user_data.get('current_scheduled_post')
@@ -2218,11 +2219,14 @@ async def handle_schedule_time(update: Update, context: ContextTypes.DEFAULT_TYP
                 post = context.user_data['current_scheduled_post']
                 post_id = post['id']
                 # Mettre à jour la date planifiée en base
+                from utils.scheduler_utils import ensure_schedule_columns, add_post_job, utc_text
                 with sqlite3.connect(settings.db_config["path"]) as conn:
                     cursor = conn.cursor()
+                    ensure_schedule_columns(cursor)
                     cursor.execute(
-                        "UPDATE posts SET scheduled_time = ?, status = 'pending' WHERE id = ?",
-                        (target_date_local.strftime('%Y-%m-%d %H:%M:%S'), post_id)
+                        "UPDATE posts SET scheduled_time = ?, run_at = ?, owner_id = COALESCE(owner_id, ?), "
+                        "status = 'pending' WHERE id = ?",
+                        (target_date_local.strftime('%Y-%m-%d %H:%M:%S'), utc_text(target_date_local), user_id, post_id)
                     )
                     conn.commit()
 
@@ -2230,33 +2234,7 @@ async def handle_schedule_time(update: Update, context: ContextTypes.DEFAULT_TYP
                 scheduler_manager = get_scheduler_manager()
                 job_id = f"post_{post_id}"
                 if scheduler_manager:
-                    if scheduler_manager.scheduler.get_job(job_id):
-                        scheduler_manager.scheduler.remove_job(job_id)
-                    
-                    def send_post_job(post_id=post_id):
-                        import asyncio
-                        try:
-                            loop = asyncio.new_event_loop()
-                            asyncio.set_event_loop(loop)
-
-                            async def send_post_async():
-                                from utils.scheduler_utils import send_scheduled_file
-                                post_dict = {"id": post_id}
-                                await send_scheduled_file(post_dict, context.application)
-
-                            loop.run_until_complete(send_post_async())
-                            loop.close()
-                        except Exception as job_error:
-                            logger.error(f"❌ Erreur dans le job {post_id}: {job_error}")
-                            logger.exception("Traceback:")
-
-                    scheduler_manager.scheduler.add_job(
-                        func=send_post_job,
-                        trigger="date",
-                        run_date=target_date_local,
-                        id=job_id,
-                        replace_existing=True
-                    )
+                    add_post_job(scheduler_manager.scheduler, post_id, target_date_local)
                     logger.info(f"✅ Job {job_id} replanifié pour {target_date_local}")
                 else:
                     logger.error("❌ Scheduler manager introuvable pour replanifier")
@@ -2266,14 +2244,19 @@ async def handle_schedule_time(update: Update, context: ContextTypes.DEFAULT_TYP
                 logger.error(f"❌ Erreur lors de la modification de l'heure: {edit_err}")
             
         else:
-            # Planifier chaque nouveau post
+            # Planifier chaque nouveau post. The ids follow the list (episodes put back in order first): at the
+            # scheduled time the posts of a channel go out lowest id first.
+            from utils.scheduler_utils import ensure_schedule_columns, add_post_job, utc_text
+            from utils.episode_order import in_episode_order
             scheduler_manager = get_scheduler_manager()
-            
+            posts, reordered = in_episode_order(posts)
+
             for post in posts:
                 try:
                     # Sauvegarder le post en base de données
                     with sqlite3.connect(settings.db_config["path"]) as conn:
                         cursor = conn.cursor()
+                        ensure_schedule_columns(cursor)
 
                         # Valider/normaliser le type de post
                         post_type = post.get('type')
@@ -2319,8 +2302,9 @@ async def handle_schedule_time(update: Update, context: ContextTypes.DEFAULT_TYP
                         if has_reactions:
                             insert_columns.append('reactions')
                             params.append(reactions_data)
-                        insert_columns += ['scheduled_time', 'status']
-                        params += [target_date_local.strftime('%Y-%m-%d %H:%M:%S'), 'pending']
+                        insert_columns += ['scheduled_time', 'status', 'run_at', 'owner_id']
+                        params += [target_date_local.strftime('%Y-%m-%d %H:%M:%S'), 'pending',
+                                   utc_text(target_date_local), user_id]
 
                         placeholders = ', '.join(['?'] * len(params))
                         sql = f"INSERT INTO posts ({', '.join(insert_columns)}) VALUES ({placeholders})"
@@ -2345,42 +2329,11 @@ async def handle_schedule_time(update: Update, context: ContextTypes.DEFAULT_TYP
 
                     # Créer le job de planification SEULEMENT si le post existe
                     job_id = f"post_{post_id}"
-                    
-                    # ✅ CORRECTION : Créer une fonction wrapper synchrone simple
-                    def send_post_job(post_id=post_id):
-                        """Fonction wrapper pour envoyer un post planifié"""
-                        import asyncio
-                        try:
-                            # Créer une nouvelle boucle pour le job
-                            loop = asyncio.new_event_loop()
-                            asyncio.set_event_loop(loop)
-                            
-                            # Fonction asynchrone pour envoyer le post
-                            async def send_post_async():
-                                from utils.scheduler_utils import send_scheduled_file
-                                post_dict = {"id": post_id}
-                                await send_scheduled_file(post_dict, context.application)
-                            
-                            # Exécuter la fonction asynchrone
-                            loop.run_until_complete(send_post_async())
-                            loop.close()
-                            
-                            logger.info(f"✅ Post {post_id} envoyé avec succès")
-                            
-                        except Exception as job_error:
-                            logger.error(f"❌ Erreur dans le job {post_id}: {job_error}")
-                            logger.exception("Traceback:")
 
                     # Planifier le job
                     if scheduler_manager:
                         try:
-                            scheduler_manager.scheduler.add_job(
-                                func=send_post_job,
-                                trigger="date",
-                                run_date=target_date_local,
-                                id=job_id,
-                                replace_existing=True
-                            )
+                            add_post_job(scheduler_manager.scheduler, post_id, target_date_local)
                             logger.info(f"✅ Job {job_id} créé pour {target_date_local}")
                             logger.info(f"🔍 Scheduler running: {scheduler_manager.scheduler.running}")
                             logger.info(f"🔍 Jobs count: {len(scheduler_manager.scheduler.get_jobs())}")
@@ -2397,13 +2350,7 @@ async def handle_schedule_time(update: Update, context: ContextTypes.DEFAULT_TYP
                             if app_scheduler:
                                 logger.info("✅ Scheduler manager trouvé dans context.application")
                                 try:
-                                    app_scheduler.scheduler.add_job(
-                                        func=send_post_job,
-                                        trigger="date",
-                                        run_date=target_date_local,
-                                        id=job_id,
-                                        replace_existing=True
-                                    )
+                                    add_post_job(app_scheduler.scheduler, post_id, target_date_local)
                                     logger.info(f"✅ Job {job_id} créé via context.application")
                                     success_count += 1
                                 except Exception as fallback_error:
@@ -2424,9 +2371,13 @@ async def handle_schedule_time(update: Update, context: ContextTypes.DEFAULT_TYP
             # Afficher le fuseau horaire utilisé
             timezone_display = user_timezone.split('/')[-1] if '/' in user_timezone else user_timezone
             
+            reorder_note = ""
+            if reordered:
+                from i18n import get_user_lang, t
+                reorder_note = "\n\n" + t(get_user_lang(user_id), "send.reordered")
             await update.message.reply_text(
                 f"✅ {success_count} file(s) scheduled for {day_text} at {time_display}\n"
-                f"🌍 Timezone: {timezone_display} ({user_timezone})",
+                f"🌍 Timezone: {timezone_display} ({user_timezone})" + reorder_note,
                 reply_markup=InlineKeyboardMarkup([[ 
                     InlineKeyboardButton("↩️ Main menu", callback_data="main_menu")
                 ]])
@@ -3227,9 +3178,13 @@ async def planifier_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 FROM posts p
                 WHERE p.status = 'pending'
                   AND p.scheduled_time IS NOT NULL
+                  AND p.owner_id = ?
                 ORDER BY p.scheduled_time
             """
-            cursor.execute(sql)
+            # only the caller's own posts (every user saw, and could edit or delete, the next post of anyone)
+            from utils.scheduler_utils import ensure_schedule_columns
+            ensure_schedule_columns(cursor)
+            cursor.execute(sql, (update.effective_user.id,))
             scheduled_posts = cursor.fetchall()
 
         if not scheduled_posts:
@@ -3882,44 +3837,17 @@ async def send_post_now(update, context, scheduled_post=None):
             logger.warning(f"⚠️ Impossible de résoudre le chat_id pour {channel}: {resolve_err}. Utilisation de la valeur fournie.")
 
         success_count = 0  # Initialisation du compteur de succès
+        failed = []        # (index, post, error): reported at the end, and kept to be sent again
         # Utilitaires anti-flood/timeout
-        import asyncio, re, os
+        import asyncio
+        from utils.telegram_retry import send_with_retry as try_send_with_retry
+        from utils.episode_order import in_episode_order
 
-        async def try_send_with_retry(coro_factory, description: str):
-            max_attempts = 3
-            attempt = 1
-            wait_seconds = 0
-            # Cap configurable pour le flood-wait (par défaut 2s)
-            try:
-                flood_cap = int(os.getenv('MAX_FLOOD_WAIT_SECONDS', '2'))
-            except Exception:
-                flood_cap = 2
-            while attempt <= max_attempts:
-                if wait_seconds > 0:
-                    try:
-                        await asyncio.sleep(wait_seconds)
-                    except Exception:
-                        pass
-                try:
-                    return await coro_factory()
-                except Exception as send_err:
-                    err = str(send_err)
-                    # Flood control with retry window
-                    match = re.search(r"Retry in (\d+) seconds", err)
-                    if "Flood control exceeded" in err and match:
-                        reported = int(match.group(1))
-                        wait_seconds = min(reported, flood_cap)
-                        logger.warning(f"⏳ Flood control – attente {wait_seconds}s (capée; reporté {reported}s) avant nouvelle tentative ({description})")
-                        attempt += 1
-                        continue
-                    # Generic timeout handling
-                    if "Timed out" in err or "timeout" in err.lower():
-                        wait_seconds = min(2 * attempt, flood_cap)
-                        logger.warning(f"⏳ Timeout – tentative {attempt+1}/{max_attempts} après {wait_seconds}s ({description})")
-                        attempt += 1
-                        continue
-                    # Autres erreurs: ne pas insister
-                    raise
+        # Files picked together on a phone often reach the bot shuffled: episodes of one series go out in order
+        reordered = False
+        if not scheduled_post:
+            posts, reordered = in_episode_order(posts)
+
         for post_index, post in enumerate(posts):
             # logger.debug(f"Sending post {post_index + 1}/{len(posts)}")
             
@@ -4035,6 +3963,7 @@ async def send_post_now(update, context, scheduled_post=None):
                             schedule_auto_destruction(context, channel_to_send, sent_message.message_id, auto_destruction_time)
                 except Exception as e:
                     logger.error(f"❌ Erreur envoi du post avec thumbnail personnalisé: {e}")
+                    failed.append((post_index, post, str(e)))
                     continue
             else:
                 # Cas 2 : Envoi simple (pas de thumbnail appliqué)
@@ -4069,6 +3998,7 @@ async def send_post_now(update, context, scheduled_post=None):
                             schedule_auto_destruction(context, channel_to_send, sent_message.message_id, auto_destruction_time)
                 except Exception as e:
                     logger.error(f"❌ Erreur envoi du post simple: {e}")
+                    failed.append((post_index, post, str(e)))
                     continue
 
             # Pause fixe anti-flood entre les envois
@@ -4077,12 +4007,15 @@ async def send_post_now(update, context, scheduled_post=None):
             except Exception:
                 pass
 
-        # Nettoyage et petit repos anti-flood avant le message de succès
-        context.user_data['posts'] = []
-        context.user_data.pop('selected_channel', None)
-        
-        # Si c'était un post planifié, le supprimer de la base et annuler le job
-        if scheduled_post and scheduled_post.get('id'):
+        # Nettoyage: the posts that failed stay (with their channel), « 🚀 Send » tries them again
+        if failed and not scheduled_post:
+            context.user_data['posts'] = [p for _, p, _ in failed]
+        else:
+            context.user_data['posts'] = []
+            context.user_data.pop('selected_channel', None)
+
+        # Si c'était un post planifié, le supprimer de la base et annuler le job (pas s'il n'est pas parti)
+        if scheduled_post and scheduled_post.get('id') and not failed:
             try:
                 post_id = scheduled_post.get('id')
                 logger.info(f"🗑️ Suppression du post planifié ID {post_id} après envoi immédiat")
@@ -4113,7 +4046,23 @@ async def send_post_now(update, context, scheduled_post=None):
                 logger.error(f"❌ Erreur lors du nettoyage du post planifié: {cleanup_error}")
 
         # Message de confirmation récapitulatif (éviter les entités markdown problématiques)
-        success_message = f"✅ Envoi réussi !\n\n{success_count} post(s) envoyé(s) vers {channel_label}"
+        from i18n import get_user_lang, t
+        lang = get_user_lang(update.effective_user.id if update.effective_user else None)
+        if failed:
+            success_message = t(lang, "send.partial", sent=success_count, total=len(posts), channel=channel_label)
+        else:
+            success_message = t(lang, "send.done", sent=success_count, channel=channel_label)
+        if reordered:
+            success_message += "\n\n" + t(lang, "send.reordered")
+        if failed:
+            success_message += "\n\n" + t(lang, "send.failed")
+            for index, post, error in failed[:10]:
+                label = post.get("filename") or (post.get("caption") or "").strip().split("\n")[0][:40] or post.get("type", "")
+                success_message += f"\n• #{index + 1} {label}: {error[:120]}"
+            if len(failed) > 10:
+                success_message += f"\n• … +{len(failed) - 10}"
+            if not scheduled_post:
+                success_message += "\n\n" + t(lang, "send.failed_kept")
 
         # Ajouter info auto-destruction si configurée
         if auto_destruction_time and auto_destruction_time > 0:
@@ -4387,309 +4336,6 @@ async def handle_send_scheduled_post(update: Update, context: ContextTypes.DEFAU
 
     except Exception as e:
         logger.error(f"❌ Erreur lors de l'envoi du post planifié : {e}")
-        await query.edit_message_text(
-            f"❌ **Erreur lors de l'envoi**\n\n"
-            f"Détails: {str(e)}\n\n"
-            f"Vérifiez que le bot est administrateur du canal.",
-            reply_markup=InlineKeyboardMarkup([[
-                InlineKeyboardButton("↩️ Menu principal", callback_data="main_menu")
-            ]]),
-            parse_mode='Markdown'
-        )
-        return MAIN_MENU
-
-async def handle_send_normal_posts(update: Update, context: ContextTypes.DEFAULT_TYPE, posts: list):
-    """Gère l'envoi de posts normaux (non planifiés)"""
-    query = update.callback_query
-    
-    try:
-        # Récupérer les paramètres d'envoi avec validation améliorée
-        selected_channel = context.user_data.get('selected_channel', {})
-        channel = posts[0].get("channel") or selected_channel.get('username', '@default_channel')
-        auto_destruction_time = context.user_data.get('auto_destruction_time', 0)
-        
-        # ✅ VALIDATION DU CANAL
-        if not channel or channel == '@default_channel':
-            # Essayer de récupérer un canal depuis la base de données
-            user_id = update.effective_user.id
-            repo_channels = list_user_channels(user_id)
-            if repo_channels:
-                channel = (repo_channels[0].get('username') or '@default_channel')
-                if not channel.startswith('@'):
-                    channel = f"@{channel}"
-            else:
-                logger.warning("Aucun canal configuré, utilisation du canal par défaut")
-        
-        # Valider le format du canal
-        if not channel.startswith('@') and not channel.startswith('-'):
-            channel = f"@{channel}"
-        
-        logger.info(f"📍 Envoi vers le canal: {channel}")
-        
-        # Grouper les médias par type pour l'envoi groupé
-        media_groups = []
-        current_group = []
-        current_group_size = 0
-        
-        # Préparer les groupes de médias
-        for post in posts:
-            post_type = post.get('type')
-            content = post.get('content')
-            
-            # Vérifier si le type de média est compatible avec les groupes de médias
-            if post_type not in ['photo', 'video', 'document']:
-                # Si le type n'est pas compatible, créer un nouveau groupe pour ce post
-                if current_group:
-                    media_groups.append(current_group)
-                    current_group = []
-                    current_group_size = 0
-                media_groups.append([post])
-                continue
-                
-            # Vérifier la taille du fichier
-            file_size = post.get('file_size', 0)
-            if current_group_size + file_size > MAX_MEDIA_GROUP_SIZE or len(current_group) >= MAX_FILES_PER_MEDIA_GROUP:
-                if current_group:
-                    media_groups.append(current_group)
-                    current_group = []
-                    current_group_size = 0
-                    
-            current_group.append(post)
-            current_group_size += file_size
-            
-        # Ajouter le dernier groupe s'il n'est pas vide
-        if current_group:
-            media_groups.append(current_group)
-            
-        logger.info(f"📦 {len(media_groups)} groupe(s) de médias créé(s) pour l'envoi")
-        
-        # Envoyer chaque groupe
-        sent_count = 0
-        for group_index, group in enumerate(media_groups, 1):
-            try:
-                # Si le groupe ne contient qu'un seul post, l'envoyer normalement
-                if len(group) == 1:
-                    post = group[0]
-                    post_type = post.get('type')
-                    content = post.get('content')
-                    caption = post.get('caption', '')
-                    
-                    if not content or not post_type:
-                        logger.warning(f"Post ignoré: contenu ou type manquant")
-                        continue
-                
-                logger.info(f"📤 Envoi du post {post_index + 1}/{len(posts)} - Type: {post_type}")
-                
-                # ✅ CONSTRUIRE LE CLAVIER AVEC RÉACTIONS ET BOUTONS
-                keyboard = []
-                
-                # DEBUG: Afficher le contenu complet du post
-                logger.info(f"🔍 DEBUG POST {post_index + 1}:")
-                logger.info(f"   📝 Type: {post.get('type')}")
-                logger.info(f"   📄 Content: {str(post.get('content'))[:50]}...")
-                logger.info(f"   📝 Caption: {post.get('caption', 'None')}")
-                logger.info(f"   ⭐ Réactions: {post.get('reactions', 'None')}")
-                logger.info(f"   🔘 Boutons: {post.get('buttons', 'None')}")
-                logger.info(f"   🔍 Type réactions: {type(post.get('reactions'))}")
-                logger.info(f"   🔍 Type boutons: {type(post.get('buttons'))}")
-                
-                # Ajouter les réactions en ligne
-                reactions = post.get('reactions', [])
-                logger.info(f"🎯 Traitement réactions pour post {post_index + 1}: {reactions}")
-                
-                if reactions:
-                    # Si c'est une string JSON, la parser
-                    if isinstance(reactions, str):
-                        try:
-                            reactions = json.loads(reactions)
-                            logger.info(f"✅ Réactions parsées depuis JSON: {reactions}")
-                        except json.JSONDecodeError:
-                            logger.warning(f"❌ Impossible de parser les réactions JSON: {reactions}")
-                            reactions = []
-                    
-                    if reactions:
-                        current_row = []
-                        for reaction in reactions:
-                            logger.info(f" Ajout réaction: {reaction}")
-                            current_row.append(InlineKeyboardButton(
-                                reaction,
-                                callback_data=f"r:{reaction}:{post_index}"
-                            ))
-                            # 4 réactions par ligne maximum
-                            if len(current_row) == 4:
-                                keyboard.append(current_row)
-                                current_row = []
-                        # Ajouter la dernière ligne si elle n'est pas vide
-                        if current_row:
-                            keyboard.append(current_row)
-                
-                # Ajouter les boutons URL
-                buttons = post.get('buttons', [])
-                logger.info(f"🎯 Traitement boutons pour post {post_index + 1}: {buttons}")
-                
-                if buttons:
-                    # Si c'est une string JSON, la parser
-                    if isinstance(buttons, str):
-                        try:
-                            buttons = json.loads(buttons)
-                            logger.info(f"✅ Boutons parsés depuis JSON: {buttons}")
-                        except json.JSONDecodeError:
-                            logger.warning(f"❌ Impossible de parser les boutons JSON: {buttons}")
-                            buttons = []
-                    
-                    for button in buttons:
-                        if isinstance(button, dict) and 'text' in button and 'url' in button:
-                            logger.info(f"🔘 Ajout bouton: {button['text']} → {button['url']}")
-                            keyboard.append([InlineKeyboardButton(button['text'], url=button['url'])])
-                
-                # Créer le markup si on a des boutons/réactions
-                reply_markup = InlineKeyboardMarkup(keyboard) if keyboard else None
-                
-                logger.info(f"🎯 Post {post_index + 1} - Réactions: {len(reactions) if isinstance(reactions, list) else 0}, Boutons: {len(buttons) if isinstance(buttons, list) else 0}")
-                logger.info(f"🎯 Clavier créé: {len(keyboard)} ligne(s) de boutons")
-                logger.info(f"🎯 Reply markup créé: {reply_markup is not None}")
-                if reply_markup:
-                    logger.info(f"🎯 Contenu du reply_markup: {reply_markup.inline_keyboard}")
-                
-                    # Construire le clavier pour ce post
-                    keyboard = _build_keyboard_for_post(post, group_index-1)  # group_index-1 car on commence à 1 dans la boucle
-                    reply_markup = InlineKeyboardMarkup(keyboard) if keyboard else None
-                    
-                    logger.info(f"📤 Envoi d'un post unique vers {channel}")
-                    
-                    sent_message = None
-                    if post_type == "photo":
-                        sent_message = await context.bot.send_photo(
-                            chat_id=channel,
-                            photo=content,
-                            caption=caption,
-                            reply_markup=reply_markup
-                        )
-                    elif post_type == "video":
-                        sent_message = await context.bot.send_video(
-                            chat_id=channel,
-                            video=content,
-                            caption=caption,
-                            reply_markup=reply_markup
-                        )
-                    elif post_type == "document":
-                        sent_message = await context.bot.send_document(
-                            chat_id=channel,
-                            document=content,
-                            caption=caption,
-                            reply_markup=reply_markup
-                        )
-                    elif post_type == "text":
-                        sent_message = await context.bot.send_message(
-                            chat_id=channel,
-                            text=content,
-                            reply_markup=reply_markup
-                        )
-                    else:
-                        logger.warning(f"Type de post non supporté: {post_type}")
-                        continue
-                        
-                    if sent_message:
-                        sent_count += 1
-                        # Programmer l'auto-destruction si configurée
-                        if auto_destruction_time > 0:
-                            schedule_auto_destruction(context, channel, sent_message.message_id, auto_destruction_time)
-                            
-                else:
-                    # Envoyer le groupe de médias
-                    logger.info(f"📤 Envoi d'un groupe de {len(group)} médias vers {channel}")
-                    
-                    # Préparer le tableau de médias pour l'API
-                    media_array = []
-                    for i, post in enumerate(group):
-                        post_type = post.get('type')
-                        content = post.get('content')
-                        caption = post.get('caption', '') if i == 0 else ''  # Seul le premier média peut avoir une légende
-                        
-                        media = {
-                            'type': post_type,
-                            'media': content
-                        }
-                        
-                        if i == 0:  # Ajouter la légende uniquement au premier média
-                            media['caption'] = caption
-                            
-                        media_array.append(media)
-                    
-                    # Envoyer le groupe de médias en sous-groupes de 10 (limite API Telegram)
-                    sent_messages = []
-                    BATCH_LIMIT = 10
-                    for i in range(0, len(media_array), BATCH_LIMIT):
-                        sub_batch = media_array[i:i+BATCH_LIMIT]
-                        try:
-                            result = await context.bot.send_media_group(
-                                chat_id=channel,
-                                media=sub_batch
-                            )
-                            if result:
-                                sent_messages.extend(result)
-                        except Exception as e:
-                            logger.error(f"❌ Erreur lors de l'envoi du sous-groupe ({i//BATCH_LIMIT+1}): {e}")
-                            continue
-                        # Délai léger entre sous-groupes pour éviter le flood
-                        if i + BATCH_LIMIT < len(media_array):
-                            await asyncio.sleep(DELAY_BETWEEN_GROUPS)
-                    
-                    if sent_messages:
-                        sent_count += len(sent_messages)
-                        # Programmer l'auto-destruction pour tous les messages du groupe
-                        if auto_destruction_time > 0:
-                            for msg in sent_messages:
-                                schedule_auto_destruction(context, channel, msg.message_id, auto_destruction_time)
-                    
-                    # Ajouter un délai entre les groupes pour éviter le flood
-                    if group_index < len(media_groups):
-                        await asyncio.sleep(DELAY_BETWEEN_GROUPS)
-                
-                if sent_message:
-                    sent_count += 1
-                    logger.info(f"✅ Post {post_index + 1} envoyé avec succès")
-                    
-                    # Programmer l'auto-destruction si configurée
-                    if auto_destruction_time > 0:
-                        schedule_auto_destruction(context, channel, sent_message.message_id, auto_destruction_time)
-                
-            except Exception as e:
-                logger.error(f"Erreur envoi post {post_index + 1}: {e}")
-                continue
-
-        # Nettoyer les données après envoi
-        context.user_data['posts'] = []
-        context.user_data.pop('selected_channel', None)
-        context.user_data.pop('auto_destruction_time', None)
-        
-        # Message de confirmation
-        success_message = f"✅ **Envoi terminé !**\n\n"
-        success_message += f"📊 {sent_count}/{len(posts)} post(s) envoyé(s)\n"
-        success_message += f"📍 Canal : {channel}"
-        
-        if auto_destruction_time > 0:
-            if auto_destruction_time < 3600:
-                time_str = f"{auto_destruction_time // 60} minute(s)"
-            elif auto_destruction_time < 86400:
-                time_str = f"{auto_destruction_time // 3600} heure(s)"
-            else:
-                time_str = f"{auto_destruction_time // 86400} jour(s)"
-            success_message += f"\n\n⏰ Auto-destruction : {time_str}"
-        
-        await query.edit_message_text(
-            success_message,
-            reply_markup=InlineKeyboardMarkup([[
-                InlineKeyboardButton("↩️ Menu principal", callback_data="main_menu")
-            ]]),
-            parse_mode='Markdown'
-        )
-        
-        logger.info("✅ === FIN handle_send_normal_posts - SUCCÈS ===")
-        return MAIN_MENU
-        
-    except Exception as e:
-        logger.error(f"❌ Erreur dans handle_send_normal_posts: {e}")
         await query.edit_message_text(
             f"❌ **Erreur lors de l'envoi**\n\n"
             f"Détails: {str(e)}\n\n"

@@ -24,7 +24,9 @@ class SchedulerManager:
         try:
             # Configuration minimale sans options avancées
             self.timezone = timezone(timezone_str)
-            self.scheduler = AsyncIOScheduler(timezone=self.timezone)
+            # A job that starts late (busy bot) still runs: APScheduler's default drops it after 1 second
+            self.scheduler = AsyncIOScheduler(timezone=self.timezone,
+                                              job_defaults={"misfire_grace_time": 3600, "coalesce": True})
             
             self.logger = logging.getLogger('SchedulerManager')
             self.running = False

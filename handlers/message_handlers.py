@@ -704,7 +704,9 @@ async def handle_post_content(update: Update, context: ContextTypes.DEFAULT_TYPE
                 'duration': video.duration or 0,
                 'local_path': None
             })
-            
+            if video.file_name:      # the episode number is often only there (to send a batch in order)
+                post_data['filename'] = video.file_name
+
         elif update.message.document:
             logger.info("📄 Type: Document - ⚡ SIMPLE REPLY")
             document = update.message.document
