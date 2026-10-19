@@ -259,7 +259,7 @@ async def handle_send_button(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 "❌ There are no files to send yet.\n"
                 "Please add content first (text, photo, video, document).",
                 reply_markup=InlineKeyboardMarkup([[
-                    InlineKeyboardButton("📝 New post", callback_data="create_publication")
+                    InlineKeyboardButton("📝 New post", callback_data="create_publication", api_kwargs={"style": "success"})
                 ], [
                     InlineKeyboardButton("↩️ Main menu", callback_data="main_menu")
                 ]])
@@ -294,7 +294,7 @@ async def handle_send_button(update: Update, context: ContextTypes.DEFAULT_TYPE)
             await update.message.reply_text(
                 "❌ No valid posts found.\nPlease create new content.",
                 reply_markup=InlineKeyboardMarkup([[
-                    InlineKeyboardButton("📝 New post", callback_data="create_publication")
+                    InlineKeyboardButton("📝 New post", callback_data="create_publication", api_kwargs={"style": "success"})
                 ], [
                     InlineKeyboardButton("↩️ Main menu", callback_data="main_menu")
                 ]])
@@ -321,8 +321,8 @@ async def handle_send_button(update: Update, context: ContextTypes.DEFAULT_TYPE)
         # Menu d'envoi
         keyboard = [
             [InlineKeyboardButton("⏱️ Set auto-destruction time", callback_data="auto_destruction")],
-            [InlineKeyboardButton("📤 Send now", callback_data="send_now")],
-            [InlineKeyboardButton("📅 Schedule", callback_data="schedule_send")],
+            [InlineKeyboardButton("📤 Send now", callback_data="send_now", api_kwargs={"style": "success"})],
+            [InlineKeyboardButton("📅 Schedule", callback_data="schedule_send", api_kwargs={"style": "primary"})],
             [InlineKeyboardButton("↩️ Back", callback_data="main_menu")]
         ]
 

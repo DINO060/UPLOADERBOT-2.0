@@ -330,8 +330,8 @@ async def handle_reaction_input(update, context):
         keyboard.extend([
             [InlineKeyboardButton("Remove Reactions", callback_data=f"remove_reactions_{post_index}")],
             [InlineKeyboardButton("🔗 Ajouter un bouton URL", callback_data=f"add_url_button_{post_index}")],
-            [InlineKeyboardButton("✏️ Edit File", callback_data=f"edit_file_{post_index}")],
-            [InlineKeyboardButton("❌ Supprimer", callback_data=f"delete_post_{post_index}")]
+            [InlineKeyboardButton("✏️ Edit File", callback_data=f"edit_file_{post_index}", api_kwargs={"style": "primary"})],
+            [InlineKeyboardButton("❌ Supprimer", callback_data=f"delete_post_{post_index}", api_kwargs={"style": "danger"})]
         ])
         reply_markup = InlineKeyboardMarkup(keyboard)
         # Suppression de l'ancien message d'aperçu s'il existe
@@ -481,13 +481,13 @@ async def handle_url_input(update, context):
         if has_reactions:
             keyboard.append([InlineKeyboardButton("🗑️ Remove Reactions", callback_data=f"remove_reactions_{post_index}")])
         else:
-            keyboard.append([InlineKeyboardButton("✨ Add Reactions", callback_data=f"add_reactions_{post_index}")])
+            keyboard.append([InlineKeyboardButton("✨ Add Reactions", callback_data=f"add_reactions_{post_index}", api_kwargs={"style": "success"})])
 
         # Additional buttons
         keyboard.extend([
             [InlineKeyboardButton("Remove URL Buttons", callback_data=f"remove_url_buttons_{post_index}")],
-            [InlineKeyboardButton("✏️ Edit File", callback_data=f"edit_file_{post_index}")],
-            [InlineKeyboardButton("❌ Delete", callback_data=f"delete_post_{post_index}")]
+            [InlineKeyboardButton("✏️ Edit File", callback_data=f"edit_file_{post_index}", api_kwargs={"style": "primary"})],
+            [InlineKeyboardButton("❌ Delete", callback_data=f"delete_post_{post_index}", api_kwargs={"style": "danger"})]
         ])
         reply_markup = InlineKeyboardMarkup(keyboard)
         preview_info = context.user_data.get('preview_messages', {}).get(post_index)
@@ -574,9 +574,9 @@ async def remove_reactions(update, context):
             # Rebuild keyboard without reactions
             keyboard = [
                 [InlineKeyboardButton("➕ Add Reactions", callback_data=f"add_reactions_{post_index}")],
-                [InlineKeyboardButton("🔗 Add URL Button", callback_data=f"add_url_button_{post_index}")],
-                [InlineKeyboardButton("❌ Delete", callback_data=f"delete_post_{post_index}")],
-                [InlineKeyboardButton("✏️ Edit File", callback_data=f"edit_file_{post_index}")]
+                [InlineKeyboardButton("🔗 Add URL Button", callback_data=f"add_url_button_{post_index}", api_kwargs={"style": "primary"})],
+                [InlineKeyboardButton("❌ Delete", callback_data=f"delete_post_{post_index}", api_kwargs={"style": "danger"})],
+                [InlineKeyboardButton("✏️ Edit File", callback_data=f"edit_file_{post_index}", api_kwargs={"style": "primary"})]
             ]
             
             # Mettre à jour le message
@@ -611,9 +611,9 @@ async def remove_url_buttons(update, context):
             # Rebuild keyboard without URL buttons
             keyboard = [
                 [InlineKeyboardButton("➕ Add Reactions", callback_data=f"add_reactions_{post_index}")],
-                [InlineKeyboardButton("🔗 Add URL Button", callback_data=f"add_url_button_{post_index}")],
-                [InlineKeyboardButton("❌ Delete", callback_data=f"delete_post_{post_index}")],
-                [InlineKeyboardButton("✏️ Edit File", callback_data=f"edit_file_{post_index}")]
+                [InlineKeyboardButton("🔗 Add URL Button", callback_data=f"add_url_button_{post_index}", api_kwargs={"style": "primary"})],
+                [InlineKeyboardButton("❌ Delete", callback_data=f"delete_post_{post_index}", api_kwargs={"style": "danger"})],
+                [InlineKeyboardButton("✏️ Edit File", callback_data=f"edit_file_{post_index}", api_kwargs={"style": "primary"})]
             ]
             
             # Mettre à jour le message

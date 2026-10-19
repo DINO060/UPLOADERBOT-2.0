@@ -166,3 +166,6 @@ local.db
 # Jupyter notebooks (if used for analysis)
 *.ipynb_checkpoints/
 analysis/*.ipynb
+# the update notice: last version announced, notices waiting to be deleted
+data/announced_version.txt
+data/update_messages.json

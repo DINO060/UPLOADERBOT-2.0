@@ -464,6 +464,10 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     if not query or not query.data:
         logger.warning("Callback sans données reçu")
         return
+    # Buttons with their own handler in another group: left alone here (else « not implemented » replaced the
+    # message they had just updated: an admin in the conversation tapping a reaction in their channel…)
+    if query.data.startswith(("r:", "connect:", "del_btn_", "fsub_verify", "fsub_check")):
+        return None
 
     # Minimal logging; noisy debug removed
 
@@ -483,12 +487,12 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         await query.answer()
 
         # Cas spécifiques pour les callbacks
-        if callback_data == "main_menu":
-            # Back to main menu
+        if callback_data in ("main_menu", "cancel"):
+            # Back to main menu (« Cancel » of the channel choice had no branch: « not implemented »)
             keyboard = [
-                [InlineKeyboardButton("📝 New post", callback_data="create_publication")],
-                [InlineKeyboardButton("📅 Scheduled posts", callback_data="planifier_post")],
-                [InlineKeyboardButton("⚙️ Settings", callback_data="settings")]
+                [InlineKeyboardButton("📝 New post", callback_data="create_publication", api_kwargs={"style": "success"})],
+                [InlineKeyboardButton("📅 Scheduled posts", callback_data="planifier_post", api_kwargs={"style": "primary"})],
+                [InlineKeyboardButton("⚙️ Settings", callback_data="settings", api_kwargs={"style": "primary"})]
             ]
 
             # Add redirect buttons from admin config
@@ -506,9 +510,25 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             )
             return MAIN_MENU
 
-        elif callback_data == "create_publication":
-            # Aller directement à la sélection des canaux pour créer une publication
+        elif callback_data in ("create_publication", "choose_channel", "schedule_publication"):
+            # Aller directement à la sélection des canaux pour créer une publication. « 📺 Choose channel » (Send with no
+            # channel) and « ⏰ Schedule a post » had no branch; choosing a channel keeps the files already sent.
             return await handle_create_publication(update, context)
+
+        elif callback_data == "send_post":
+            # « ↩️ Back » from the scheduling screen had no branch: back to the send options
+            posts = context.user_data.get("posts", [])
+            channel = (context.user_data.get("selected_channel") or {}).get("username") or "your channel"
+            keyboard = [
+                [InlineKeyboardButton("⏱️ Set auto-destruction time", callback_data="auto_destruction")],
+                [InlineKeyboardButton("📤 Send now", callback_data="send_now", api_kwargs={"style": "success"})],
+                [InlineKeyboardButton("📅 Schedule", callback_data="schedule_send", api_kwargs={"style": "primary"})],
+                [InlineKeyboardButton("↩️ Back", callback_data="main_menu")]
+            ]
+            await safe_edit_callback_message(
+                query, f"Your {len(posts)} files are ready to be sent to {channel}.\nWhen would you like to send them?",
+                reply_markup=InlineKeyboardMarkup(keyboard))
+            return WAITING_PUBLICATION_CONTENT
             
         elif callback_data == "planifier_post" or callback_data == "scheduled_posts":
             return await planifier_post(update, context)
@@ -3465,7 +3485,7 @@ async def show_edit_file_menu(update: Update, context: ContextTypes.DEFAULT_TYPE
         
         # Menu d'édition exactement comme dans l'image
         keyboard = [
-            [InlineKeyboardButton("✏️ Rename", callback_data=f"rename_post_{post_index}")],
+            [InlineKeyboardButton("✏️ Rename", callback_data=f"rename_post_{post_index}", api_kwargs={"style": "success"})],
 
         ]
         

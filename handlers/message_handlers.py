@@ -13,6 +13,7 @@ from utils.message_utils import PostType, MessageError
 from utils.validators import InputValidator
 from utils.channel_manager import handle_add_channel_message
 from conversation_states import MAIN_MENU, WAITING_PUBLICATION_CONTENT, WAITING_TAG_INPUT, SETTINGS
+from utils.whats_new import GUIDE_EN
 import pytz
 
 # Constants
@@ -253,10 +254,10 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
         # Les boutons ReplyKeyboard sont maintenant gérés par le handler contextuel
         # Ce handler ne traite que le texte générique - rediriger vers menu principal
         keyboard = [
-            [InlineKeyboardButton("📝 New post", callback_data="create_publication")],
+            [InlineKeyboardButton("📝 New post", callback_data="create_publication", api_kwargs={"style": "success"})],
             [InlineKeyboardButton("⏰ Schedule a post", callback_data="schedule_publication")],
-            [InlineKeyboardButton("⚙️ Settings", callback_data="settings")],
-            [InlineKeyboardButton("❓ Help", callback_data="help")]
+            [InlineKeyboardButton("⚙️ Settings", callback_data="settings", api_kwargs={"style": "primary"})],
+            [InlineKeyboardButton("❓ Help", url=GUIDE_EN)]     # callback « help » had no branch: the guide instead
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
 
@@ -596,7 +597,7 @@ async def handle_channel_info(update: Update, context: ContextTypes.DEFAULT_TYPE
         await update.message.reply_text(
             "❌ No configuration in progress.",
             reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("⚙️ Settings", callback_data="settings")],
+                [InlineKeyboardButton("⚙️ Settings", callback_data="settings", api_kwargs={"style": "primary"})],
                 [InlineKeyboardButton("↩️ Main Menu", callback_data="main_menu")]
             ])
         )
@@ -764,10 +765,10 @@ async def _send_post_with_buttons(update: Update, context: ContextTypes.DEFAULT_
     try:
         # Interface simplifiée avec seulement les boutons essentiels
         keyboard = [
-            [InlineKeyboardButton("✨ Add Reactions", callback_data=f"add_reactions_{post_index}")],
-            [InlineKeyboardButton("🔗 Add URL Button", callback_data=f"add_url_button_{post_index}")],
-            [InlineKeyboardButton("✏️ Edit File", callback_data=f"edit_file_{post_index}")],
-            [InlineKeyboardButton("❌ Delete", callback_data=f"delete_post_{post_index}")]
+            [InlineKeyboardButton("✨ Add Reactions", callback_data=f"add_reactions_{post_index}", api_kwargs={"style": "success"})],
+            [InlineKeyboardButton("🔗 Add URL Button", callback_data=f"add_url_button_{post_index}", api_kwargs={"style": "primary"})],
+            [InlineKeyboardButton("✏️ Edit File", callback_data=f"edit_file_{post_index}", api_kwargs={"style": "primary"})],
+            [InlineKeyboardButton("❌ Delete", callback_data=f"delete_post_{post_index}", api_kwargs={"style": "danger"})]
         ]
         
         reply_markup = InlineKeyboardMarkup(keyboard)

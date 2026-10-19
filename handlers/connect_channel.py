@@ -1,5 +1,5 @@
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import ContextTypes, CommandHandler, CallbackQueryHandler
+from telegram.ext import ContextTypes, CommandHandler, CallbackQueryHandler, ApplicationHandlerStop
 from utils.telegram_checks import is_bot_admin, is_user_admin, resolve_chat_id
 from handlers.my_chat_member import KNOWN_CHANNELS
 from database.channel_repo import upsert_channel, get_channel_by_tg_id, add_member_if_missing
@@ -62,8 +62,14 @@ async def connect_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await q.edit_message_text("✅ Channel connected to your account.")
 
 
+async def _connect_cb_then_stop(update, context):
+    await connect_cb(update, context)
+    raise ApplicationHandlerStop             # the conversation must not take this button too
+
+
 def register_connect(app):
     app.add_handler(CommandHandler("connect", connect_cmd))
-    app.add_handler(CallbackQueryHandler(connect_cb, pattern=r"^connect:-?\d+$"))
+    # group -1: in group 0 the bot's catch-all came first and this button never answered
+    app.add_handler(CallbackQueryHandler(_connect_cb_then_stop, pattern=r"^connect:-?\d+$"), group=-1)
 
 

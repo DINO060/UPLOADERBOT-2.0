@@ -30,7 +30,8 @@ from telegram.ext import (
     CallbackQueryHandler,
     ConversationHandler,
     filters,
-    ContextTypes
+    ContextTypes,
+    ApplicationHandlerStop,
 )
 from dotenv import load_dotenv
 # Ensure environment variables from .env are available before reading them below
@@ -534,14 +535,63 @@ async def status_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(text)
 
 
-# --- vérification d’abonnement (utilitaire réutilisable) ---
+async def forced_channels(context: ContextTypes.DEFAULT_TYPE) -> list[str]:
+    """Every channel to join: force_join_channels.json (the admin panel, @djd208) AND admin_core's list (/addfsub,
+    which only wrote there: a channel added that way was never checked)."""
+    found, seen = [], set()
+    sources = list(await load_fj_channels())
+    admin_db = context.bot_data.get("admin_db") if context and getattr(context, "bot_data", None) is not None else None
+    if admin_db:
+        try:
+            sources += list(admin_db.get_force_join_channels())
+        except Exception as e:
+            logger.warning(f"force join: admin_core channels unreadable: {e}")
+    for ch in sources:
+        ch = _normalize_channel(str(ch))
+        key = ch.lower().lstrip("@")
+        if ch and key not in seen:
+            seen.add(key)
+            found.append(ch)
+    return found
+
+
+FJ_ALERT_EVERY = 6 * 3600          # a channel the bot can't check is reported to the admins this often
+_fj_alerted: dict[str, float] = {}
+
+
+async def _fj_alert(context: ContextTypes.DEFAULT_TYPE, ch: str, why: str) -> None:
+    if time.time() - _fj_alerted.get(ch, 0) < FJ_ALERT_EVERY:
+        return
+    _fj_alerted[ch] = time.time()
+    text = (f"⚠️ Force join: I can't check who is in {ch} ({why}).\n\n"
+            "Until this is fixed, users are NOT checked for this channel.\n"
+            "Fix: make this bot an administrator of the channel, then /channels to verify.")
+    for admin in ADMIN_IDS:
+        try:
+            await context.bot.send_message(admin, text)
+        except Exception as e:
+            logger.warning(f"force join alert to {admin}: {e}")
+
+
+async def channel_problem(context: ContextTypes.DEFAULT_TYPE, ch: str):
+    """None when the bot can check this channel's members (it must be an admin there), else why not."""
+    try:
+        me = await context.bot.get_chat_member(ch, context.bot.id)
+        return None if me.status in ("administrator", "creator") else "I'm not an administrator there"
+    except Exception as e:
+        return str(e) or type(e).__name__
+
+
+# --- vérification d'abonnement (utilitaire réutilisable) ---
 async def is_user_in_required_channels(
     context: ContextTypes.DEFAULT_TYPE, user_id: int
 ) -> tuple[bool, list[str]]:
     """
     Returns (ok, missing[]). ok=True if user is a member of ALL required channels.
+    A channel the bot can't check (not an admin there, wrong name) used to refuse EVERY user, silently: users now
+    pass and the admins are alerted. A network error lets them through too.
     """
-    channels = await load_fj_channels()
+    channels = await forced_channels(context)
     if not channels:
         return True, []
     missing = []
@@ -555,12 +605,88 @@ async def is_user_in_required_channels(
             )
             if not is_member:
                 missing.append(ch)
-        except (BadRequest, Forbidden):
-            # if the bot has no access, consider as missing
-            missing.append(ch)
-        except Exception:
-            missing.append(ch)
+        except BadRequest as e:
+            if any(k in str(e).lower() for k in ("user not found", "participant_id_invalid", "user_not_participant")):
+                missing.append(ch)
+            else:
+                await _fj_alert(context, ch, str(e))
+        except Forbidden as e:
+            await _fj_alert(context, ch, str(e))
+        except Exception as e:
+            logger.warning(f"force join check {ch}: {e}")
     return (len(missing) == 0), missing
+
+
+async def join_buttons(context: ContextTypes.DEFAULT_TYPE, channels: list[str]) -> InlineKeyboardMarkup:
+    """A « Join » button per channel (t.me/name, or the invite link of a private one) and « I have joined »."""
+    rows = []
+    for ch in channels:
+        url = f"https://t.me/{ch.lstrip('@')}" if ch.startswith("@") else None
+        if not url:
+            try:
+                url = (await context.bot.get_chat(ch)).invite_link
+            except Exception:
+                url = None
+        if url:
+            rows.append([InlineKeyboardButton(f"📢 Join {ch}", url=url, api_kwargs={"style": "primary"})])
+    rows.append([InlineKeyboardButton("✅ I have joined", callback_data="fsub_check", api_kwargs={"style": "success"})])
+    return InlineKeyboardMarkup(rows)
+
+
+async def fsub_check_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """« ✅ I have joined » (the join message had no button at all)."""
+    q = update.callback_query
+    ok, missing = await is_user_in_required_channels(context, q.from_user.id)
+    if ok:
+        await q.answer("✅ Thank you!")
+        await q.edit_message_text(
+            "✅ You're in! Tap below to start.",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Start", callback_data="main_menu",
+                                                                      api_kwargs={"style": "success"})]]))
+    else:
+        await q.answer("❌ You haven't joined all the channels yet.", show_alert=True)
+    raise ApplicationHandlerStop
+
+
+async def channels_overview(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/channels and /fsub (admins): every channel really required, and whether the bot can check it."""
+    if not is_admin(update.effective_user.id if update.effective_user else 0):
+        raise ApplicationHandlerStop
+    channels = await forced_channels(context)
+    if not channels:
+        await update.message.reply_text("No force-join channels configured.")
+    else:
+        lines = []
+        for ch in channels:
+            problem = await channel_problem(context, ch)
+            lines.append(f"• {ch} — " + ("✅ checked (I'm an admin)" if not problem else f"❌ NOT checked: {problem}"))
+        await update.message.reply_text("📋 Force-join channels:\n" + "\n".join(lines)
+                                        + "\n\nAdd with /addfsub @channel, remove with /delfsub @channel.")
+    raise ApplicationHandlerStop
+
+
+async def delfsub_everywhere(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/delfsub (admins): removed from both lists (each command used to know only one of them)."""
+    if not is_admin(update.effective_user.id if update.effective_user else 0):
+        raise ApplicationHandlerStop
+    if not context.args:
+        await update.message.reply_text("Usage: /delfsub <@username|chat_id> [others…]")
+        raise ApplicationHandlerStop
+    drop = {_normalize_channel(a).lower().lstrip("@") for a in context.args if a.strip()}
+    async with fj_lock:
+        cur = await load_fj_channels()
+        await save_fj_channels([c for c in cur if c.lower().lstrip("@") not in drop])
+    admin_db, admin_config = context.bot_data.get("admin_db"), context.bot_data.get("admin_config")
+    for ch in context.args:
+        for store in (admin_db, admin_config):
+            try:
+                if store:
+                    store.remove_force_join_channel(_normalize_channel(ch))
+            except Exception as e:
+                logger.warning(f"/delfsub {ch}: {e}")
+    left = await forced_channels(context)
+    await update.message.reply_text("🗑️ Done. Channels still required:\n" + ("\n".join(f"• {c}" for c in left) or "none"))
+    raise ApplicationHandlerStop
 
 
 async def require_fsub_or_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
@@ -612,7 +738,8 @@ async def require_fsub_or_prompt(update: Update, context: ContextTypes.DEFAULT_T
         return True
     links = "\n".join(f"• {x}" for x in missing)
     await update.effective_message.reply_text(
-        "🔒 To use the bot, please join these channels and try again:\n" + links
+        "🔒 To use the bot, please join these channels, then tap « I have joined »:\n" + links,
+        reply_markup=await join_buttons(context, missing)
     )
     return False
 
@@ -1357,7 +1484,7 @@ async def handle_add_thumbnail_and_rename(update, context):
                      f"Aucun thumbnail trouvé pour @{clean_username}.\n"
                      f"Veuillez d'abord configurer un thumbnail dans les paramètres.",
                 reply_markup=InlineKeyboardMarkup([[
-                    InlineKeyboardButton("⚙️ Settings", callback_data="settings"),
+                    InlineKeyboardButton("⚙️ Settings", callback_data="settings", api_kwargs={"style": "primary"}),
                     InlineKeyboardButton("↩️ Menu principal", callback_data="main_menu")
                 ]])
             )
@@ -1747,7 +1874,7 @@ async def handle_send_button(update, context):
                 "❌ There are no files to send yet.\n"
                 "Please add content first (text, photo, video, document).",
                 reply_markup=InlineKeyboardMarkup([[
-                    InlineKeyboardButton("📝 New post", callback_data="create_publication")
+                    InlineKeyboardButton("📝 New post", callback_data="create_publication", api_kwargs={"style": "success"})
                 ], [
                     InlineKeyboardButton("↩️ Main menu", callback_data="main_menu")
                 ]])
@@ -1785,7 +1912,7 @@ async def handle_send_button(update, context):
                 "❌ No valid posts found.\n"
                 "Please create new content.",
                 reply_markup=InlineKeyboardMarkup([[
-                    InlineKeyboardButton("📝 New post", callback_data="create_publication")
+                    InlineKeyboardButton("📝 New post", callback_data="create_publication", api_kwargs={"style": "success"})
                 ], [
                     InlineKeyboardButton("↩️ Main menu", callback_data="main_menu")
                 ]])
@@ -1907,87 +2034,6 @@ def analyze_posts_content(posts):
     except Exception as e:
         logger.error(f"Erreur dans analyze_posts_content: {e}")
         return f"{len(posts)} fichier(s)"
-
-async def notify_all_users_startup(app: Application) -> None:
-    """Notifie tous les utilisateurs du démarrage du bot avec les informations de statut"""
-    try:
-        # Informations de statut du bot
-        from utils.scheduler_utils import DAILY_LIMIT_BYTES, COOLDOWN_SECONDS
-        
-        # Convertir les bytes en GB pour l'affichage
-        daily_limit_gb = DAILY_LIMIT_BYTES / (1024 * 1024 * 1024)
-        
-        # Message de statut
-        status_message = (
-            f"🟢 <b>Bot started!</b>\n\n"
-            f"Uploader bot is now online and ready.\n\n"
-            f"📈 Daily limit: {daily_limit_gb:.1f} GB\n"
-            f"⏱ Cooldown: {COOLDOWN_SECONDS}s\n"
-            f"⚡ Fast mode: ENABLED\n"
-            f"📢 Force Join: @djd208"
-        )
-        
-        # Récupérer tous les utilisateurs depuis la base de données
-        import sqlite3
-        from config import settings
-        
-        try:
-            with sqlite3.connect(settings.db_config["path"]) as conn:
-                cursor = conn.cursor()
-                
-                # Récupérer tous les user_ids uniques depuis toutes les tables (schema-aware)
-                # Détecter si channels.user_id existe, sinon fallback sur channel_members
-                cursor.execute("PRAGMA table_info(channels)")
-                ch_cols = [c[1] for c in cursor.fetchall()]
-                has_channels_user = 'user_id' in ch_cols
-                cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='channel_members'")
-                has_members = cursor.fetchone() is not None
-
-                subqueries = []
-                if has_channels_user:
-                    subqueries.append("SELECT user_id FROM channels")
-                elif has_members:
-                    subqueries.append("SELECT user_id FROM channel_members")
-                # Toujours inclure les autres tables user-scopées
-                subqueries.append("SELECT user_id FROM user_timezones")
-                subqueries.append("SELECT user_id FROM user_usage")
-                subqueries.append("SELECT user_id FROM channel_thumbnails")
-
-                union_sql = " UNION ".join(subqueries)
-                cursor.execute(f"SELECT DISTINCT user_id FROM ({union_sql})")
-
-                user_ids = [row[0] for row in cursor.fetchall()]
-                
-                if not user_ids:
-                    logger.info("ℹ️ Aucun utilisateur trouvé dans la base de données")
-                    return
-                
-                logger.info(f"📢 Envoi de la notification de démarrage à {len(user_ids)} utilisateurs")
-                
-                # Envoyer le message à tous les utilisateurs
-                success_count = 0
-                error_count = 0
-                
-                for user_id in user_ids:
-                    try:
-                        await app.bot.send_message(
-                            chat_id=user_id,
-                            text=status_message,
-                            parse_mode='HTML'
-                        )
-                        success_count += 1
-                        logger.info(f"✅ Notification envoyée à l'utilisateur {user_id}")
-                    except Exception as e:
-                        error_count += 1
-                        logger.warning(f"⚠️ Impossible d'envoyer la notification à l'utilisateur {user_id}: {e}")
-                
-                logger.info(f"📊 Résumé des notifications: {success_count} succès, {error_count} échecs")
-                
-        except Exception as db_error:
-            logger.error(f"❌ Erreur lors de la récupération des utilisateurs depuis la base de données: {db_error}")
-                
-    except Exception as e:
-        logger.error(f"Erreur lors de la notification des utilisateurs: {e}")
 
 def main():
     """Fonction principale du bot"""
@@ -2132,8 +2178,12 @@ def main():
                 # Pyrogram est maintenant démarré automatiquement via ensure_pyro_started()
                 logger.info("✅ Client Pyrogram géré automatiquement (singleton)")
                 
-                # Notifier tous les utilisateurs du démarrage du bot
-                await notify_all_users_startup(app)
+                # A real update is announced once (whatsnew.txt) and deleted after 6 h; a plain restart tells only
+                # the admins. It replaces « 🟢 Bot started! » sent to every user at EVERY start.
+                from utils.whats_new import announce_update, update_cleanup_loop
+                asyncio.create_task(announce_update(app, settings.db_config["path"], ADMIN_IDS,
+                                                    forced_channels, channel_problem))
+                asyncio.create_task(update_cleanup_loop(app.bot))
                 
             except Exception as e:
                 logger.error(f"Erreur lors de l'initialisation post-startup: {e}")
@@ -2268,20 +2318,30 @@ def main():
             """Handler global pour les réactions avec priorité maximale"""
             query = update.callback_query
             if query and query.data and query.data.startswith('r:'):
-                return await handle_reaction_toggle(update, context)
-        
+                await handle_reaction_toggle(update, context)
+                raise ApplicationHandlerStop      # not again by the conversation (it rewrote the channel post)
+
         application.add_handler(CallbackQueryHandler(global_reaction_handler, pattern=r'^r:.*'), group=-1)
+        # Force join, one list for everyone (admin_core's /addfsub and the JSON file used to be two lists)
+        application.add_handler(CallbackQueryHandler(fsub_check_callback, pattern=r"^fsub_check$"), group=-1)
+        application.add_handler(CommandHandler(["channels", "fsub"], channels_overview), group=-1)
+        application.add_handler(CommandHandler("delfsub", delfsub_everywhere), group=-1)
 
-        # Handler global DEBUG: log all callback queries (helps diagnose capture/order issues)
-        application.add_handler(CallbackQueryHandler(_debug_cbq, pattern=".*"), group=0)
+        # Every button logged — in its own group: in group 0 its « .* » took every button of that group (/connect, the
+        # channel reactions react_…, the buttons pressed outside the conversation), which then never answered
+        application.add_handler(CallbackQueryHandler(_debug_cbq, pattern=".*"), group=-2)
 
-        # Handler global des callback queries (pour capter les clics sur les posts de canal hors conversation)
-        # Placé en group=0 pour être traité avant le ConversationHandler
-        application.add_handler(CallbackQueryHandler(handle_callback), group=0)
+        async def main_menu_guarded(update: Update, context: ContextTypes.DEFAULT_TYPE):
+            """« ↩️ Main menu » on any old message brings the user back in (after a restart the conversation,
+            kept in memory only, is gone and every button did nothing)."""
+            if not await require_fsub_or_prompt(update, context):
+                return ConversationHandler.END
+            return await handle_callback(update, context)
 
         # Définition du ConversationHandler avec les différents états
         conv_handler = ConversationHandler(
             entry_points=[
+                CallbackQueryHandler(main_menu_guarded, pattern=r"^main_menu$"),
                 CommandHandler("start", start_guarded),
                 CommandHandler("create", create_guarded),
                 CommandHandler("settings", settings_guarded),
@@ -2390,7 +2450,27 @@ def main():
 
         # Le ConversationHandler est mis en group=1 pour laisser passer le handler global (group=0)
         application.add_handler(conv_handler, group=1)
-        
+
+        async def outside_conversation_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+            """A button pressed outside the conversation (in it, group 1 handles it): a channel reaction (react_…,
+            from any channel member), or a button of an old message after a restart. Both did nothing."""
+            q = update.callback_query
+            data = (q.data or "") if q else ""
+            if data.startswith("react_"):
+                await handle_callback(update, context)
+                raise ApplicationHandlerStop          # not a second time by the conversation
+            if conv_handler._conversations.get(conv_handler._get_key(update)) is not None:
+                return
+            if any(isinstance(e, CallbackQueryHandler) and e.check_update(update) for e in conv_handler.entry_points):
+                return                                # « ↩️ Main menu »: it starts the conversation again
+            try:
+                await q.answer("⌛ This button has expired (the bot was restarted). Tap ↩️ Main menu or send /start.",
+                               show_alert=True)
+            except Exception:
+                pass
+
+        application.add_handler(CallbackQueryHandler(outside_conversation_callback), group=0)
+
         # Register chat member updates and /connect
         register_my_chat_member(application)
         register_connect(application)

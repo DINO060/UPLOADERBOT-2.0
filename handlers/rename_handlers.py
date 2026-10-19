@@ -342,7 +342,7 @@ def _build_post_keyboard(post: dict, post_index: int) -> list:
         ])
     else:
         keyboard.append([
-            InlineKeyboardButton("✨ Add Reactions", callback_data=f"add_reactions_{post_index}")
+            InlineKeyboardButton("✨ Add Reactions", callback_data=f"add_reactions_{post_index}", api_kwargs={"style": "success"})
         ])
 
     # Boutons URL existants
@@ -352,9 +352,9 @@ def _build_post_keyboard(post: dict, post_index: int) -> list:
 
     # Boutons d'action
     keyboard.extend([
-        [InlineKeyboardButton("🔗 Add URL Button", callback_data=f"add_url_button_{post_index}")],
-        [InlineKeyboardButton("✏️ Edit File", callback_data=f"edit_file_{post_index}")],
-        [InlineKeyboardButton("❌ Delete", callback_data=f"delete_post_{post_index}")]
+        [InlineKeyboardButton("🔗 Add URL Button", callback_data=f"add_url_button_{post_index}", api_kwargs={"style": "primary"})],
+        [InlineKeyboardButton("✏️ Edit File", callback_data=f"edit_file_{post_index}", api_kwargs={"style": "primary"})],
+        [InlineKeyboardButton("❌ Delete", callback_data=f"delete_post_{post_index}", api_kwargs={"style": "danger"})]
     ])
 
     return keyboard

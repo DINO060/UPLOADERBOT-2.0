@@ -65,9 +65,9 @@ class CommandHandlers:
 
         # Create inline keyboard (aligned with callback_handlers.py)
         keyboard = [
-            [InlineKeyboardButton("📝 New post", callback_data="create_publication")],
-            [InlineKeyboardButton("📅 Scheduled posts", callback_data="planifier_post")],
-            [InlineKeyboardButton("⚙️ Settings", callback_data="settings")]
+            [InlineKeyboardButton("📝 New post", callback_data="create_publication", api_kwargs={"style": "success"})],
+            [InlineKeyboardButton("📅 Scheduled posts", callback_data="planifier_post", api_kwargs={"style": "primary"})],
+            [InlineKeyboardButton("⚙️ Settings", callback_data="settings", api_kwargs={"style": "primary"})]
         ]
 
         # Add redirect buttons from admin config
@@ -257,15 +257,15 @@ class CommandHandlers:
 
             "🔹 Main menu\n"
             "The bot shows three main options at startup:\n"
-            "• 📝 New post - Create a new post. Select the target channel, then send your content (text, photo, video or document). The bot accepts up to 24 files per post.\n"
-            "• 📅 Scheduled posts - View all your scheduled posts. You can see the planned send time and edit or cancel each post individually.\n"
-            "• ⚙️ Settings - Configure the bot, including channel management, timezone and custom thumbnails.\n\n"
+            "• 📝 New post - Create a new post. Select the target channel, then send your content (text, photo, video or document). The bot accepts up to 30 files per post; episodes sent together go out in episode order.\n"
+            "• 📅 Scheduled posts - View your next scheduled post. You can see the planned send time and edit or cancel it.\n"
+            "• ⚙️ Settings - Configure the bot, including channel management and timezone.\n\n"
 
             "🔧 Post editing features\n"
             "Once your content is added, you can enhance it with:\n"
             "• ✨ Add reactions - Add reaction buttons under your post. Users can click them and they will be counted. Up to 8 reactions.\n"
             "• 🔗 Add URL button - Add a clickable button with an external link (website, channel, or any online resource).\n"
-            "• ✏️ Edit File - Three options: rename file, add a custom thumbnail, or both at once.\n"
+            "• ✏️ Edit File → Rename - The file itself gets its new name (up to 2 GB), the caption too.\n"
             "• ❌ Delete - Remove a file from the current post.\n\n"
 
             "📤 Sending options\n"
@@ -277,7 +277,6 @@ class CommandHandlers:
             "📺 Channel management\n"
             "In Settings, you can manage your Telegram channels:\n"
             "• ➕ Add a channel - Register a new channel where you are an admin.\n"
-            "• 🖼️ Manage thumbnail - Set a default thumbnail for all files sent to a specific channel.\n"
             "• 🏷️ Add a hashtag - Configure automatic hashtags added to all posts for that channel.\n\n"
 
             "⌨️ Control buttons during creation\n"
@@ -290,7 +289,11 @@ class CommandHandlers:
             "This bot greatly simplifies managing your Telegram publications by centralizing all essential features in a clear and accessible interface."
         )
 
-        await update.message.reply_text(help_text, parse_mode='Markdown')
+        # (it promised a thumbnail option and a thumbnail menu that no button leads to)
+        from utils.whats_new import GUIDE_EN, GUIDE_FR
+        guide = InlineKeyboardMarkup([[InlineKeyboardButton("📖 Guide (English)", url=GUIDE_EN)],
+                                      [InlineKeyboardButton("📖 Mode d'emploi (Français)", url=GUIDE_FR)]])
+        await update.message.reply_text(help_text, parse_mode='Markdown', reply_markup=guide)
 
         logger.debug(f"User {update.effective_user.id} requested help")
 

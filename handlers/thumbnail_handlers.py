@@ -357,7 +357,7 @@ async def handle_add_thumbnail_and_rename(update: Update, context: ContextTypes.
                      f"No thumbnail found for @{clean_username}.\n"
                      f"Please configure a thumbnail in settings first.",
                 reply_markup=InlineKeyboardMarkup([[
-                    InlineKeyboardButton("⚙️ Settings", callback_data="settings"),
+                    InlineKeyboardButton("⚙️ Settings", callback_data="settings", api_kwargs={"style": "primary"}),
                     InlineKeyboardButton("↩️ Main menu", callback_data="main_menu")
                 ]]),
                 parse_mode="Markdown"

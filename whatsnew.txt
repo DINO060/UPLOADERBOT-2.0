@@ -1,0 +1,10 @@
+# What's new, newest version on top. At start-up, a version not announced yet is sent once to every user
+# (and deleted after 6 h). A version line is "== <version> ==", then one "- " line per change, in English, short.
+# To announce an update: add a new block at the top. A restart without a new block tells users nothing.
+
+== 2026-10-19 ==
+- Episodes are published in order, also when you schedule them (they could arrive mixed up).
+- A post that fails is shown by name and kept, and scheduled posts are sent even after the bot was off.
+- ✏️ Edit File → Rename now really renames the file in your channel (up to 2 GB).
+- Buttons on old messages work again after a restart (↩️ Main menu), and « I have joined » was added.
+- A new guide with pictures and a short video: /help
