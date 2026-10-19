@@ -157,5 +157,10 @@
   "send.failed": "❌ Pas envoyés :",
   "send.failed_kept": "Ils sont gardés : appuie sur « 🚀 Send » pour réessayer.",
   "schedule.failed": "❌ Un post planifié n'a pas pu être envoyé vers {channel} :\n{error}",
-  "schedule.caught_up": "✅ Le bot était hors ligne : {count} de tes post(s) planifié(s) étaient en retard. Ils partent maintenant, dans l'ordre."
+  "schedule.caught_up": "✅ Le bot était hors ligne : {count} de tes post(s) planifié(s) étaient en retard. Ils partent maintenant, dans l'ordre.",
+  "rename.download": "📥 Fichier {index} : téléchargement… {pct}%",
+  "rename.upload": "📤 Fichier {index} : envoi sous son nouveau nom… {pct}%",
+  "rename.done": "✅ Fichier renommé : <code>{name}</code>",
+  "rename.failed": "❌ Le fichier {index} n'a pas pu être renommé ({error}). Il garde son ancien nom.",
+  "send.renaming": "⏳ Fichier(s) {files} encore en cours de renommage. Réessaie dans un instant."
 }

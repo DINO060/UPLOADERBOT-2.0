@@ -6,7 +6,6 @@ Expose deux fonctions:
 """
 
 import asyncio
-import atexit
 from typing import Optional
 import logging
 from pyrogram import Client
@@ -50,12 +49,8 @@ async def get_pyro() -> Optional[Client]:
             in_memory=True,        # pas de session fichier
         )
         await _PYRO.start()
-
-        # Enregistrer l'arrêt propre à la sortie du process
-        try:
-            atexit.register(lambda: asyncio.get_event_loop().create_task(_PYRO.stop()))
-        except Exception:
-            pass
+        # No atexit stop: at exit the event loop is already closed, so it only printed « Event loop is closed »
+        # at every restart (the connection is closed with the process anyway)
         logger.info("✅ Client Pyrogram global démarré avec succès")
         return _PYRO
 

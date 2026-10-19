@@ -6,6 +6,7 @@ Extracted from bot.py for better code organization.
 """
 
 import os
+import html
 import logging
 import json
 import asyncio
@@ -15,6 +16,8 @@ from telegram.ext import ContextTypes
 
 from conversation_states import MAIN_MENU, WAITING_RENAME_INPUT, WAITING_THUMBNAIL_RENAME_INPUT, WAITING_PUBLICATION_CONTENT
 from database.manager import DatabaseManager
+from i18n import get_user_lang, t
+from utils.file_rename import reupload, with_extension
 
 logger = logging.getLogger("handlers.rename")
 
@@ -149,58 +152,18 @@ async def handle_rename_input(update: Update, context: ContextTypes.DEFAULT_TYPE
             return MAIN_MENU
 
         post = context.user_data['posts'][post_index]
-        post['filename'] = new_filename
 
-        # Construire les boutons dynamiques
-        keyboard = _build_post_keyboard(post, post_index)
-        reply_markup = InlineKeyboardMarkup(keyboard)
-
-        # Supprimer l'ancien aperçu si présent
-        preview_info = context.user_data.get('preview_messages', {}).get(post_index)
-        if preview_info:
-            try:
-                await context.bot.delete_message(
-                    chat_id=preview_info['chat_id'],
-                    message_id=preview_info['message_id']
-                )
-            except Exception:
-                pass
-
-        # Construire la légende avec tag si disponible
+        # The caption is what the preview shows: the new name + the channel's tag (it used to stay the old one)
         caption_text = _build_caption_with_tag(
             new_filename,
             post,
             context,
             update.effective_user.id
         )
-
-        # Envoyer le média avec nouvelle légende
-        sent_message = await _send_renamed_media(
-            context,
-            update.effective_chat.id,
-            post,
-            caption_text,
-            reply_markup
-        )
-
-        # Enregistrer le nouvel aperçu
-        if sent_message:
-            if 'preview_messages' not in context.user_data:
-                context.user_data['preview_messages'] = {}
-            context.user_data['preview_messages'][post_index] = {
-                'message_id': sent_message.message_id,
-                'chat_id': update.effective_chat.id
-            }
-
-        # Message de confirmation
-        try:
-            await context.bot.send_message(
-                chat_id=update.effective_chat.id,
-                text=f"✅ File renamed: <code>{new_filename}</code>",
-                parse_mode="HTML"
-            )
-        except Exception:
-            pass
+        if post.get('type') == 'text':
+            post['content'] = caption_text
+        else:
+            post['caption'] = caption_text
 
         # Supprimer le prompt et le message utilisateur
         _cleanup_rename_messages(context, user_chat_id, user_message_id)
@@ -216,6 +179,16 @@ async def handle_rename_input(update: Update, context: ContextTypes.DEFAULT_TYPE
         # Nettoyer les variables temporaires
         context.user_data.pop('waiting_for_rename', None)
         context.user_data.pop('current_post_index', None)
+
+        lang = get_user_lang(update.effective_user.id)
+        if post.get('type') in ('document', 'video'):
+            # The file itself is sent again under its new name, in the background (a big file takes minutes)
+            start_rename(context.bot, user_chat_id, context.user_data, post_index, post,
+                         with_extension(new_filename, post.get('filename')), lang)
+        else:
+            post['filename'] = new_filename
+            await show_preview(context.bot, user_chat_id, context.user_data, post_index, post)
+            await _say(context.bot, user_chat_id, t(lang, "rename.done", name=html.escape(new_filename)))
 
         return WAITING_PUBLICATION_CONTENT
 
@@ -249,6 +222,89 @@ async def handle_thumbnail_rename_input(update: Update, context: ContextTypes.DE
             ]])
         )
         return MAIN_MENU
+
+
+# ============================================================
+# RENOMMAGE RÉEL (en arrière-plan)
+# ============================================================
+
+_running = set()     # renames in progress (a task nobody holds can be garbage-collected)
+
+
+def start_rename(bot, chat_id: int, user_data: dict, post_index: int, post: dict, file_name: str, lang: str):
+    """The file is sent again under its new name in the background; until then the post is marked « renaming »
+    and « 🚀 Send » waits for it."""
+    post['renaming'] = True
+    task = asyncio.create_task(_rename(bot, chat_id, user_data, post_index, post, file_name, lang))
+    _running.add(task)
+    task.add_done_callback(_running.discard)
+    return task
+
+
+async def _rename(bot, chat_id: int, user_data: dict, post_index: int, post: dict, file_name: str, lang: str):
+    number = post_index + 1
+    status = None
+    try:
+        status = await bot.send_message(chat_id=chat_id, text=t(lang, "rename.download", index=number, pct=0))
+    except Exception:
+        pass
+
+    async def on_progress(phase, pct):
+        if status:
+            try:
+                await status.edit_text(t(lang, f"rename.{phase}", index=number, pct=pct))
+            except Exception:
+                pass
+
+    old_name = post.get('filename')
+    try:
+        post['content'] = await reupload(bot, chat_id, post, file_name, on_progress)
+        post['filename'] = file_name
+        done = t(lang, "rename.done", name=html.escape(file_name))
+    except Exception as e:
+        logger.exception(f"Rename of file {number} failed: {e}")
+        post['filename'] = old_name
+        done = t(lang, "rename.failed", index=number, error=html.escape(str(e)[:200]))
+    finally:
+        post['renaming'] = False
+    if status:
+        try:
+            await status.delete()
+        except Exception:
+            pass
+    # where the post is now (another one may have been deleted meanwhile); gone → nothing to show
+    index = next((i for i, p in enumerate(user_data.get('posts') or []) if p is post), None)
+    if index is None:
+        return
+    await show_preview(bot, chat_id, user_data, index, post)
+    await _say(bot, chat_id, done)
+
+
+async def show_preview(bot, chat_id: int, user_data: dict, post_index: int, post: dict):
+    """The post shown again, as it will be published, in place of its previous preview."""
+    preview_info = user_data.get('preview_messages', {}).get(post_index)
+    if preview_info:
+        try:
+            await bot.delete_message(chat_id=preview_info['chat_id'], message_id=preview_info['message_id'])
+        except Exception:
+            pass
+    text = post.get('content') if post.get('type') == 'text' else post.get('caption')
+    try:
+        sent = await _send_renamed_media(bot, chat_id, post, text or '',
+                                         InlineKeyboardMarkup(_build_post_keyboard(post, post_index)))
+    except Exception as e:
+        logger.warning(f"Preview of file {post_index + 1} not sent: {e}")
+        return None
+    if sent:
+        user_data.setdefault('preview_messages', {})[post_index] = {'message_id': sent.message_id, 'chat_id': chat_id}
+    return sent
+
+
+async def _say(bot, chat_id: int, text: str):
+    try:
+        await bot.send_message(chat_id=chat_id, text=text, parse_mode="HTML")
+    except Exception:
+        pass
 
 
 # ============================================================
@@ -336,7 +392,7 @@ def _build_caption_with_tag(
 
 
 async def _send_renamed_media(
-    context: ContextTypes.DEFAULT_TYPE,
+    bot,
     chat_id: int,
     post: dict,
     caption: str,
@@ -346,7 +402,7 @@ async def _send_renamed_media(
     Envoie le média renommé.
 
     Args:
-        context: Contexte Telegram
+        bot: le bot Telegram
         chat_id: ID du chat
         post: Données du post
         caption: Légende
@@ -359,28 +415,28 @@ async def _send_renamed_media(
     content = post.get('content')
 
     if post_type == 'photo':
-        return await context.bot.send_photo(
+        return await bot.send_photo(
             chat_id=chat_id,
             photo=content,
             caption=caption,
             reply_markup=reply_markup
         )
     elif post_type == 'video':
-        return await context.bot.send_video(
+        return await bot.send_video(
             chat_id=chat_id,
             video=content,
             caption=caption,
             reply_markup=reply_markup
         )
     elif post_type == 'document':
-        return await context.bot.send_document(
+        return await bot.send_document(
             chat_id=chat_id,
             document=content,
             caption=caption,
             reply_markup=reply_markup
         )
     elif post_type == 'text':
-        return await context.bot.send_message(
+        return await bot.send_message(
             chat_id=chat_id,
             text=caption,
             reply_markup=reply_markup

@@ -2093,11 +2093,13 @@ async def handle_schedule_time(update: Update, context: ContextTypes.DEFAULT_TYP
         if not posts and 'current_scheduled_post' not in context.user_data:
             await update.message.reply_text(
                 "❌ No content to schedule. Please send content first.",
-                reply_markup=InlineKeyboardMarkup([[ 
+                reply_markup=InlineKeyboardMarkup([[
                     InlineKeyboardButton("↩️ Main menu", callback_data="main_menu")
                 ]])
             )
             return MAIN_MENU
+        if await refuse_while_renaming(update, posts):      # the time can be typed again once it's done
+            return SCHEDULE_SEND
 
         # Parser l'heure
         time_text = update.message.text.strip()
@@ -3702,6 +3704,19 @@ async def schedule_send(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return MAIN_MENU
 
+async def refuse_while_renaming(update, posts) -> bool:
+    """True (and the user told) when a file of the batch is still being sent again under its new name."""
+    busy = [str(i + 1) for i, p in enumerate(posts or []) if p.get('renaming')]
+    if not busy:
+        return False
+    from i18n import get_user_lang, t
+    text = t(get_user_lang(update.effective_user.id), "send.renaming", files=", ".join(busy))
+    target = update.message or (update.callback_query.message if update.callback_query else None)
+    if target:
+        await target.reply_text(text)
+    return True
+
+
 async def send_post_now(update, context, scheduled_post=None):
     """Envoie le post immédiatement en utilisant le meilleur client disponible."""
     try:
@@ -3767,6 +3782,10 @@ async def send_post_now(update, context, scheduled_post=None):
                     )
                 return MAIN_MENU
             
+            # A file being renamed is still the old one: wait for it
+            if await refuse_while_renaming(update, posts):
+                return WAITING_PUBLICATION_CONTENT
+
             # ✅ VALIDATION DU CANAL - Vérifier qu'un canal valide est sélectionné
             selected_channel = context.user_data.get('selected_channel', {})
             channel = selected_channel.get('username') or selected_channel.get('channel_id')

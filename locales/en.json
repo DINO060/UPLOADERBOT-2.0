@@ -157,5 +157,10 @@
   "send.failed": "❌ Not sent:",
   "send.failed_kept": "They are kept: press « 🚀 Send » to try them again.",
   "schedule.failed": "❌ A scheduled post could not be sent to {channel}:\n{error}",
-  "schedule.caught_up": "✅ The bot was offline: {count} of your scheduled post(s) were late. They are being sent now, in order."
+  "schedule.caught_up": "✅ The bot was offline: {count} of your scheduled post(s) were late. They are being sent now, in order.",
+  "rename.download": "📥 File {index}: downloading… {pct}%",
+  "rename.upload": "📤 File {index}: sending it under its new name… {pct}%",
+  "rename.done": "✅ File renamed: <code>{name}</code>",
+  "rename.failed": "❌ File {index} could not be renamed ({error}). It keeps its old name.",
+  "send.renaming": "⏳ File(s) {files} still being renamed. Try again in a moment."
 }

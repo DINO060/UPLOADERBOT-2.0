@@ -706,6 +706,10 @@ async def handle_post_content(update: Update, context: ContextTypes.DEFAULT_TYPE
             })
             if video.file_name:      # the episode number is often only there (to send a batch in order)
                 post_data['filename'] = video.file_name
+            # kept by a rename (the file is sent again: same size on screen, same thumbnail)
+            post_data.update({'width': video.width or 0, 'height': video.height or 0})
+            if getattr(video, 'thumbnail', None):
+                post_data['thumb_id'] = video.thumbnail.file_id
 
         elif update.message.document:
             logger.info("📄 Type: Document - ⚡ SIMPLE REPLY")
@@ -721,7 +725,9 @@ async def handle_post_content(update: Update, context: ContextTypes.DEFAULT_TYPE
                 'filename': filename,
                 'local_path': None  # Pas de téléchargement
             })
-            
+            if getattr(document, 'thumbnail', None):     # kept by a rename (the file is sent again)
+                post_data['thumb_id'] = document.thumbnail.file_id
+
             logger.info(f"✅ Document added instantly - {filename}")
         else:
             logger.info("❌ Unsupported file type")
