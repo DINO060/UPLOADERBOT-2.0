@@ -258,7 +258,7 @@ class CommandHandlers:
             "🔹 Main menu\n"
             "The bot shows three main options at startup:\n"
             "• 📝 New post - Create a new post. Select the target channel, then send your content (text, photo, video or document). The bot accepts up to 30 files per post; episodes sent together go out in episode order.\n"
-            "• 📅 Scheduled posts - View your next scheduled post. You can see the planned send time and edit or cancel it.\n"
+            "• 📅 Scheduled posts - Your next scheduled posts (up to 10), with their channel and send time. Open one to edit or cancel it.\n"
             "• ⚙️ Settings - Configure the bot, including channel management and timezone.\n\n"
 
             "🔧 Post editing features\n"

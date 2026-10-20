@@ -299,12 +299,32 @@ async def main():
     check("… the confirmation says they were reordered", replies and "🔢" in replies[-1], str(replies))
     soonest = (datetime.now(pytz.UTC) + timedelta(hours=1)).strftime("%Y-%m-%d %H:%M:%S")   # the next post of all
     add_posts(["someone else's"], when_local=soonest, owner=6)
+    with sqlite3.connect(DB) as conn:                    # someone else's channel, first in the table
+        cols = [r[1] for r in conn.execute("PRAGMA table_info(channels)")]
+        if "tg_chat_id" in cols:
+            conn.execute("INSERT INTO channels (tg_chat_id, title, username) VALUES (-100555, 'Someone else''s channel', 'someone')")
+        else:
+            conn.execute("INSERT INTO channels (name, username, user_id) VALUES ('Someone else''s channel', 'someone', 6)")
     update, replies = fake_update(5)
     await cb.planifier_post(update, context)
     shown = "\n".join(replies)
     other_id = sqlite3.connect(DB).execute("SELECT id FROM posts WHERE content = ?", ("someone else's",)).fetchone()[0]
     check("« Scheduled posts »: only the caller's own posts (anyone's next post was shown, editable)",
           f"show_post_{other_id}'" not in shown and f"show_post_{rows[0][0]}'" in shown, shown[:400])
+    check("… all 4 of them, not just the next one, in send order",
+          [shown.find(f"show_post_{r[0]}'") for r in rows] == sorted(shown.find(f"show_post_{r[0]}'") for r in rows)
+          and all(f"show_post_{r[0]}'" in shown for r in rows), shown[:400])
+    check("… with their own channel's name (it showed the first channel of the table, someone else's)",
+          "My channel" in shown and "Someone else" not in shown, shown[:300])
+    add_posts([f"x{k}" for k in range(9)], when_local="2031-01-01 20:00:00")
+    update, replies = fake_update(5)
+    await cb.planifier_post(update, context)
+    with sqlite3.connect(DB) as conn:
+        mine = conn.execute("SELECT COUNT(*) FROM posts WHERE owner_id = 5 AND status = 'pending'"
+                            " AND scheduled_time > '2026'").fetchone()[0]
+    check(f"… {mine} scheduled: the next 10 shown, « and {mine - 10} more »", replies and mine > 10
+          and f"… and {mine - 10} more" in replies[-1] and replies[-1].count("show_post_") == 10,
+          replies and replies[-1][:900])
     manager.scheduler.shutdown(wait=False)
 
 

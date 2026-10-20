@@ -3240,14 +3240,14 @@ async def planifier_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 # En cas de format inattendu, afficher quand même
                 filtered_posts.append(post)
 
-        # Trier par heure planifiée et ne garder que le premier
+        # The next ones, in send order (only the very next one was shown: 12 episodes scheduled, 1 visible)
+        SHOWN = 10
         try:
-            filtered_posts.sort(key=lambda p: datetime.strptime(p[4], '%Y-%m-%d %H:%M:%S'))
-            if len(filtered_posts) > 1:
-                filtered_posts = filtered_posts[:1]
+            filtered_posts.sort(key=lambda p: (datetime.strptime(p[4], '%Y-%m-%d %H:%M:%S'), p[0]))
         except Exception:
-            if len(filtered_posts) > 1:
-                filtered_posts = filtered_posts[:1]
+            pass
+        more = max(0, len(filtered_posts) - SHOWN)
+        filtered_posts = filtered_posts[:SHOWN]
 
         if not filtered_posts:
             if update.callback_query:
@@ -3259,32 +3259,40 @@ async def planifier_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await update.message.reply_text("❌ No scheduled posts found.")
             return MAIN_MENU
 
-        # Résoudre les noms de canaux pour l'affichage 
-        with sqlite3.connect(settings.db_config["path"]) as conn2:
-            cursor2 = conn2.cursor()
-            
-            keyboard = []
-            message = "📅 Scheduled posts:\n\n"
+        # The channel of each post (posts keep its Telegram id). It showed the first channel of the table, whoever's.
+        names = {}
 
-            for post in filtered_posts:
-                # ✅ Nouvelle structure sans jointure : (post_id, post_type, content, caption, scheduled_time, channel_id)
-                post_id, post_type, content, caption, scheduled_time, channel_id = post
-                
-                # Résoudre le nom du canal à partir de channel_id
-                channel_name = f"Canal {channel_id}"  # Nom par défaut
-                
-                # Essayer de résoudre via la table channels
+        async def channel_label(channel_id):
+            if channel_id in names:
+                return names[channel_id]
+            label = None
+            try:
+                with sqlite3.connect(settings.db_config["path"]) as conn2:
+                    cols = [r[1] for r in conn2.execute("PRAGMA table_info(channels)")]
+                    if "tg_chat_id" in cols:
+                        row = conn2.execute("SELECT title, username FROM channels WHERE tg_chat_id = ?",
+                                            (channel_id,)).fetchone()
+                        label = row and (row[0] or (f"@{row[1]}" if row[1] else None))
+            except sqlite3.Error:
+                pass
+            if not label:
                 try:
-                    cursor2.execute("SELECT name, username FROM channels WHERE name IS NOT NULL LIMIT 1")
-                    ch_result = cursor2.fetchone()
-                    if ch_result:
-                        channel_name = ch_result[0] or f"Canal {channel_id}"
-                except:
-                    pass  # Utiliser la valeur par défaut
-                    
-                button_text = f"{scheduled_time} - {channel_name}"
-                keyboard.append([InlineKeyboardButton(button_text, callback_data=f"show_post_{post_id}")])
-                message += f"• {button_text}\n"
+                    chat = await context.bot.get_chat(channel_id)
+                    label = chat.title or (f"@{chat.username}" if chat.username else None)
+                except Exception:
+                    pass
+            names[channel_id] = label or f"channel {channel_id}"
+            return names[channel_id]
+
+        keyboard = []
+        message = "📅 Scheduled posts:\n\n"
+        for post in filtered_posts:
+            post_id, post_type, content, caption, scheduled_time, channel_id = post
+            button_text = f"{scheduled_time[:16]} - {await channel_label(channel_id)}"
+            keyboard.append([InlineKeyboardButton(button_text, callback_data=f"show_post_{post_id}")])
+            message += f"• {button_text}\n"
+        if more:
+            message += f"… and {more} more\n"
 
         keyboard.append([InlineKeyboardButton("↩️ Main menu", callback_data="main_menu")])
 
