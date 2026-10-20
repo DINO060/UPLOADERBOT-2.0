@@ -7,6 +7,7 @@
 - A post that fails is shown by name and kept, and scheduled posts are sent even after the bot was off.
 - ✏️ Edit File → Rename now really renames the file in your channel (up to 2 GB).
 - 📅 Scheduled posts lists your next 10 posts with their own channel (it showed only one, with a wrong channel name).
+- Scheduling for « Overmorrow » now really waits 2 days (it was sent the same day).
 - Buttons on old messages work again after a restart (↩️ Main menu), and « I have joined » was added.
 - The last screens still in French (reactions, URL button, rename, timezone) are now in English.
 - A new guide with pictures and a short video: /help

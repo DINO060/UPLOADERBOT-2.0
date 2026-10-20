@@ -2162,16 +2162,9 @@ async def handle_schedule_time(update: Update, context: ContextTypes.DEFAULT_TYP
         tz = pytz.timezone(user_timezone)
         local_now = datetime.now(tz)
         
-        target_date_local = local_now.replace(
-                hour=hour,
-                minute=minute,
-                second=0,
-                microsecond=0
-            )
-
-        # Si c'est pour demain, ajouter un jour
-        if context.user_data['schedule_day'] == 'tomorrow':
-            target_date_local += timedelta(days=1)
+        # The chosen day at that time, in the user's timezone (« Overmorrow » used to be today: sent 2 days early)
+        day = local_now.date() + timedelta(days={'tomorrow': 1, 'overmorrow': 2}.get(context.user_data['schedule_day'], 0))
+        target_date_local = tz.localize(datetime(day.year, day.month, day.day, hour, minute))
 
         # Vérifier que l'heure n'est pas dans le passé
         if target_date_local <= local_now:
@@ -2388,7 +2381,8 @@ async def handle_schedule_time(update: Update, context: ContextTypes.DEFAULT_TYP
         # Message de confirmation
         if success_count > 0:
             time_display = target_date_local.strftime("%H:%M")
-            day_text = "today" if context.user_data['schedule_day'] == 'today' else "tomorrow"
+            day_text = {"today": "today", "tomorrow": "tomorrow"}.get(context.user_data['schedule_day'],
+                                                                     target_date_local.strftime("%A %d %B"))
             
             # Afficher le fuseau horaire utilisé
             timezone_display = user_timezone.split('/')[-1] if '/' in user_timezone else user_timezone
@@ -4116,10 +4110,10 @@ async def send_post_now(update, context, scheduled_post=None):
             if auto_destruction_time < 3600:
                 time_str = f"{auto_destruction_time // 60} minute(s)"
             elif auto_destruction_time < 86400:
-                time_str = f"{auto_destruction_time // 3600} heure(s)"
+                time_str = f"{auto_destruction_time // 3600} hour(s)"
             else:
-                time_str = f"{auto_destruction_time // 86400} jour(s)"
-            success_message += f"\n\n⏰ Auto-destruction activée : {time_str}"
+                time_str = f"{auto_destruction_time // 86400} day(s)"
+            success_message += f"\n\n⏰ Auto-destruction on: {time_str}"
 
         if update.message:
             await update.message.reply_text(

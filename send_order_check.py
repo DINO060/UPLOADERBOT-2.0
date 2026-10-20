@@ -297,7 +297,19 @@ async def main():
     check("… one job each, run on the bot's loop", all(job(f"post_{r[0]}") and job(f"post_{r[0]}").func is su.run_post_job
                                                      for r in rows))
     check("… the confirmation says they were reordered", replies and "🔢" in replies[-1], str(replies))
-    soonest = (datetime.now(pytz.UTC) + timedelta(hours=1)).strftime("%Y-%m-%d %H:%M:%S")   # the next post of all
+    update, replies = fake_update(5, "12:00")
+    context.user_data.update(posts=[{"type": "document", "content": "overmorrow", "filename": "x.pdf", "caption": "",
+                                     "channel": "mychan"}], schedule_day="overmorrow",
+                             selected_channel={"username": "mychan", "name": "My"})
+    await cb.handle_schedule_time(update, context)
+    with sqlite3.connect(DB) as conn:
+        run_at = conn.execute("SELECT run_at FROM posts WHERE content = 'overmorrow'").fetchone()
+    hours = run_at and (pytz.UTC.localize(datetime.strptime(run_at[0][:19], "%Y-%m-%d %H:%M:%S"))
+                        - datetime.now(pytz.UTC)).total_seconds() / 3600
+    check("« Overmorrow » at 12:00: in 2 days (it was today: sent 2 days early, or refused as past)",
+          run_at and 36 < hours <= 60 and replies and "scheduled for" in replies[-1] and "tomorrow" not in replies[-1],
+          f"{hours} {replies[-1:]}")
+    soonest =(datetime.now(pytz.UTC) + timedelta(hours=1)).strftime("%Y-%m-%d %H:%M:%S")   # the next post of all
     add_posts(["someone else's"], when_local=soonest, owner=6)
     with sqlite3.connect(DB) as conn:                    # someone else's channel, first in the table
         cols = [r[1] for r in conn.execute("PRAGMA table_info(channels)")]
