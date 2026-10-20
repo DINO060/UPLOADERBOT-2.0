@@ -2,6 +2,11 @@
 # (and deleted after 6 h). A version line is "== <version> ==", then one "- " line per change, in English, short.
 # To announce an update: add a new block at the top. A restart without a new block tells users nothing.
 
+== 2026-10-20 ==
+- 🖼️ A thumbnail per channel: ⚙️ Settings → 🌐 Manage channels → your channel → 🖼️ Thumbnail.
+- Then ✏️ Edit File → 🖼️ Thumbnail puts it on a video or a document (up to 2 GB).
+- ⏱️ Auto-destruction now also works on scheduled posts, and survives a restart of the bot.
+
 == 2026-10-19 ==
 - Episodes are published in order, also when you schedule them (they could arrive mixed up).
 - A post that fails is shown by name and kept, and scheduled posts are sent even after the bot was off.

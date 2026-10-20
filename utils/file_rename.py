@@ -1,7 +1,8 @@
 """
 Renaming a file for real: it is downloaded and sent again under its new name, so the channel gets the renamed
 file. Done with Pyrogram logged in as this bot (utils/pyro_client): any size up to 2 GB, where the Bot API can only
-download 20 MB. The file keeps its own thumbnail and, for a video, its duration and size.
+download 20 MB. The file keeps its own thumbnail (or its channel's, once 🖼️ Thumbnail was applied) and, for a
+video, its duration and size.
 """
 import os
 import re
@@ -63,7 +64,9 @@ async def reupload(bot, chat_id: int, post: dict, new_name: str,
         os.replace(source, target)
 
         thumb = None
-        if post.get("thumb_id"):            # the file's own thumbnail (small: the Bot API is enough)
+        if post.get("thumb_path") and os.path.exists(post["thumb_path"]):
+            thumb = post["thumb_path"]       # the channel's thumbnail (🖼️ Thumbnail), kept by later renames
+        elif post.get("thumb_id"):          # the file's own thumbnail (small: the Bot API is enough)
             try:
                 thumb_file = await bot.get_file(post["thumb_id"])
                 thumb = str(await thumb_file.download_to_drive(str(work / "thumb.jpg")))

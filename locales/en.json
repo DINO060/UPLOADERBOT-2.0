@@ -162,5 +162,9 @@
   "rename.upload": "📤 File {index}: sending it under its new name… {pct}%",
   "rename.done": "✅ File renamed: <code>{name}</code>",
   "rename.failed": "❌ File {index} could not be renamed ({error}). It keeps its old name.",
+  "thumb.download": "📥 File {index}: downloading… {pct}%",
+  "thumb.upload": "📤 File {index}: sending it with the channel's thumbnail… {pct}%",
+  "thumb.done": "🖼️ Thumbnail added to file {index}.",
+  "thumb.failed": "❌ The thumbnail could not be added to file {index} ({error}).",
   "send.renaming": "⏳ File(s) {files} still being renamed. Try again in a moment."
 }

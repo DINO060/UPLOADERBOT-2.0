@@ -109,6 +109,8 @@ def ensure_schedule_columns(cursor) -> None:
         cursor.execute("ALTER TABLE posts ADD COLUMN run_at TEXT")
     if 'owner_id' not in cols:
         cursor.execute("ALTER TABLE posts ADD COLUMN owner_id INTEGER")
+    if 'auto_destroy' not in cols:              # seconds after publication; 0 = kept
+        cursor.execute("ALTER TABLE posts ADD COLUMN auto_destroy INTEGER NOT NULL DEFAULT 0")
 
 
 def add_post_job(scheduler, post_id: int, run_date: datetime) -> None:
@@ -790,6 +792,19 @@ async def send_scheduled_file(post: Dict[str, Any], app: Optional[Application] =
         if sent_message:
             logger.info(f"✅ Scheduled message sent successfully: {post_id}")
             _later_count.pop(post_id, None)
+
+            # ⏱️ the auto-destruction chosen before « 📅 Schedule » (a scheduled post never had it)
+            try:
+                from config import settings as _settings
+                with sqlite3.connect(_settings.db_config.get("path", "bot.db")) as conn:
+                    cur = conn.cursor()
+                    ensure_schedule_columns(cur)
+                    row = cur.execute("SELECT auto_destroy FROM posts WHERE id = ?", (post_id,)).fetchone()
+                if row and row[0]:
+                    from utils import auto_destruction
+                    auto_destruction.schedule(app.bot, sent_message.chat_id, sent_message.message_id, int(row[0]))
+            except Exception as ad_err:
+                logger.warning(f"auto-destruction of scheduled post {post_id} not set: {ad_err}")
 
             # Enregistrer l'usage après envoi
             try:

@@ -250,20 +250,11 @@ def normalize_channel_username(channel_username):
     return channel_username.lstrip('@') if isinstance(channel_username, str) else None
 
 def schedule_auto_destruction(context, chat_id, message_id, auto_destruction_time):
-    """Programme l'auto-destruction d'un message avec asyncio uniquement (stable)."""
-    import asyncio
-
-    async def _delete():
-        try:
-            delay = max(0, int(auto_destruction_time or 0))
-            await asyncio.sleep(delay)
-            await context.bot.delete_message(chat_id=chat_id, message_id=message_id)
-            logger.info(f"🗑️ Message auto-supprimé après {delay}s")
-        except Exception as e:
-            logger.warning(f"Erreur suppression auto: {e}")
-
+    """The message is deleted after auto_destruction_time seconds — kept on disk from a minute up, so a restart
+    of the bot loses none (utils/auto_destruction.py; it was a timer in memory)."""
     try:
-        asyncio.create_task(_delete())
+        from utils import auto_destruction
+        auto_destruction.schedule(context.bot, chat_id, message_id, auto_destruction_time)
         return True
     except Exception as e:
         logger.warning(f"Impossible de programmer l'auto-destruction: {e}")
@@ -482,7 +473,15 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         if callback_data.startswith("react_"):
             logger.info(f"🚀 DIRECTION vers handle_reaction_callback: {callback_data}")
             return await handle_reaction_callback(update, context, callback_data)
-        
+
+        # 🖼️ the channel thumbnail (handlers/channel_thumb_ui.py): they answer themselves (alerts)
+        if callback_data.startswith("cthumb_"):
+            from handlers.channel_thumb_ui import on_callback as channel_thumb_callback
+            return await channel_thumb_callback(update, context, callback_data)
+        if callback_data.startswith("apply_thumb_"):
+            from handlers.channel_thumb_ui import apply_to_post
+            return await apply_to_post(update, context, int(callback_data.rsplit("_", 1)[1]))
+
         # Pour tous les autres callbacks
         await query.answer()
 
@@ -2317,9 +2316,10 @@ async def handle_schedule_time(update: Update, context: ContextTypes.DEFAULT_TYP
                         if has_reactions:
                             insert_columns.append('reactions')
                             params.append(reactions_data)
-                        insert_columns += ['scheduled_time', 'status', 'run_at', 'owner_id']
+                        insert_columns += ['scheduled_time', 'status', 'run_at', 'owner_id', 'auto_destroy']
                         params += [target_date_local.strftime('%Y-%m-%d %H:%M:%S'), 'pending',
-                                   utc_text(target_date_local), user_id]
+                                   utc_text(target_date_local), user_id,
+                                   int(context.user_data.get('auto_destruction_time') or 0)]
 
                         placeholders = ', '.join(['?'] * len(params))
                         sql = f"INSERT INTO posts ({', '.join(insert_columns)}) VALUES ({placeholders})"
@@ -2709,6 +2709,7 @@ async def show_channel_options(update: Update, context: ContextTypes.DEFAULT_TYP
     
     keyboard = [
         [InlineKeyboardButton("⚙️ Custom settings", callback_data=f"custom_channel_{channel_username}")],
+        [InlineKeyboardButton("🖼️ Thumbnail", callback_data=f"cthumb_{channel_username.lstrip('@')}")],
         [InlineKeyboardButton("📝 Create a post", callback_data=f"select_channel_{channel_username}")],
         [InlineKeyboardButton("🗑️ Delete channel", callback_data=f"delete_channel_{channel['id']}")],
         [InlineKeyboardButton("↩️ Back", callback_data="manage_channels")]
@@ -3488,8 +3489,10 @@ async def show_edit_file_menu(update: Update, context: ContextTypes.DEFAULT_TYPE
         # Menu d'édition exactement comme dans l'image
         keyboard = [
             [InlineKeyboardButton("✏️ Rename", callback_data=f"rename_post_{post_index}", api_kwargs={"style": "success"})],
-
         ]
+        if post.get('type') in ('video', 'document'):          # the channel's thumbnail (channel_thumb_ui.py)
+            keyboard.append([InlineKeyboardButton("🖼️ Thumbnail", callback_data=f"apply_thumb_{post_index}",
+                                                  api_kwargs={"style": "primary"})])
         
         from utils.message_utils import safe_edit_message_text
         await safe_edit_message_text(

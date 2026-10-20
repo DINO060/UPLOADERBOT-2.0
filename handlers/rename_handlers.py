@@ -231,28 +231,30 @@ async def handle_thumbnail_rename_input(update: Update, context: ContextTypes.DE
 _running = set()     # renames in progress (a task nobody holds can be garbage-collected)
 
 
-def start_rename(bot, chat_id: int, user_data: dict, post_index: int, post: dict, file_name: str, lang: str):
+def start_rename(bot, chat_id: int, user_data: dict, post_index: int, post: dict, file_name: str, lang: str,
+                 kind: str = "rename"):
     """The file is sent again under its new name in the background; until then the post is marked « renaming »
-    and « 🚀 Send » waits for it."""
+    and « 🚀 Send » waits for it. kind « thumb »: the same name, with the channel's thumbnail (post['thumb_path'])."""
     post['renaming'] = True
-    task = asyncio.create_task(_rename(bot, chat_id, user_data, post_index, post, file_name, lang))
+    task = asyncio.create_task(_rename(bot, chat_id, user_data, post_index, post, file_name, lang, kind))
     _running.add(task)
     task.add_done_callback(_running.discard)
     return task
 
 
-async def _rename(bot, chat_id: int, user_data: dict, post_index: int, post: dict, file_name: str, lang: str):
+async def _rename(bot, chat_id: int, user_data: dict, post_index: int, post: dict, file_name: str, lang: str,
+                  kind: str = "rename"):
     number = post_index + 1
     status = None
     try:
-        status = await bot.send_message(chat_id=chat_id, text=t(lang, "rename.download", index=number, pct=0))
+        status = await bot.send_message(chat_id=chat_id, text=t(lang, f"{kind}.download", index=number, pct=0))
     except Exception:
         pass
 
     async def on_progress(phase, pct):
         if status:
             try:
-                await status.edit_text(t(lang, f"rename.{phase}", index=number, pct=pct))
+                await status.edit_text(t(lang, f"{kind}.{phase}", index=number, pct=pct))
             except Exception:
                 pass
 
@@ -260,11 +262,14 @@ async def _rename(bot, chat_id: int, user_data: dict, post_index: int, post: dic
     try:
         post['content'] = await reupload(bot, chat_id, post, file_name, on_progress)
         post['filename'] = file_name
-        done = t(lang, "rename.done", name=html.escape(file_name))
+        done = (t(lang, "thumb.done", index=number) if kind == "thumb"
+                else t(lang, "rename.done", name=html.escape(file_name)))
     except Exception as e:
-        logger.exception(f"Rename of file {number} failed: {e}")
+        logger.exception(f"{kind} of file {number} failed: {e}")
         post['filename'] = old_name
-        done = t(lang, "rename.failed", index=number, error=html.escape(str(e)[:200]))
+        if kind == "thumb":
+            post['thumb_path'] = post.get('thumb_before')     # not applied: later renames keep the old one
+        done = t(lang, f"{kind}.failed", index=number, error=html.escape(str(e)[:200]))
     finally:
         post['renaming'] = False
     if status:

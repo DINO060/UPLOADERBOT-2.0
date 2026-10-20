@@ -229,6 +229,19 @@ async def main():
           bot.sent == [f"s{k:02d}" for k in range(1, 13)], str(bot.sent))
     check("… and removed from the database once sent", pending(ids) == {})
 
+    from utils import auto_destruction as ad
+    ad.PENDING = Path(tempfile.mkdtemp()) / "auto_destruction.json"
+    bot.sent.clear()
+    [aid] = add_posts(["self-destructing"])
+    with sqlite3.connect(DB) as conn:
+        conn.execute("UPDATE posts SET auto_destroy = 3600 WHERE id = ?", (aid,))
+    su.add_post_job(manager.scheduler, aid, datetime.now(pytz.UTC) + timedelta(seconds=1))
+    await until(lambda: bot.sent == ["self-destructing"] and ad._load())
+    rows = ad._load()
+    left = rows and rows[0][2] - __import__("time").time()
+    check("a scheduled post with ⏱️ 1 h: deleted from the channel 1 h after it went out (it never was)",
+          len(rows) == 1 and rows[0][1] == bot.n and 3590 < left <= 3600, str(rows))
+
     bot.sent.clear()
     bot.down = True
     ids = add_posts([f"n{k}" for k in range(1, 6)])
@@ -300,10 +313,12 @@ async def main():
     update, replies = fake_update(5, "12:00")
     context.user_data.update(posts=[{"type": "document", "content": "overmorrow", "filename": "x.pdf", "caption": "",
                                      "channel": "mychan"}], schedule_day="overmorrow",
-                             selected_channel={"username": "mychan", "name": "My"})
+                             selected_channel={"username": "mychan", "name": "My"}, auto_destruction_time=1800)
     await cb.handle_schedule_time(update, context)
+    context.user_data.pop("auto_destruction_time", None)
     with sqlite3.connect(DB) as conn:
-        run_at = conn.execute("SELECT run_at FROM posts WHERE content = 'overmorrow'").fetchone()
+        run_at = conn.execute("SELECT run_at, auto_destroy FROM posts WHERE content = 'overmorrow'").fetchone()
+    check("scheduling with ⏱️ 30 min chosen first: kept with the post", run_at and run_at[1] == 1800, str(run_at))
     hours = run_at and (pytz.UTC.localize(datetime.strptime(run_at[0][:19], "%Y-%m-%d %H:%M:%S"))
                         - datetime.now(pytz.UTC)).total_seconds() / 3600
     check("« Overmorrow » at 12:00: in 2 days (it was today: sent 2 days early, or refused as past)",

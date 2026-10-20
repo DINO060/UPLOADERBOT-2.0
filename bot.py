@@ -73,6 +73,7 @@ from handlers.connect_channel import register_connect
 # Thumbnail handlers removed
 from utils.pyro_client import ensure_pyro_started, get_pyro
 from handlers.callback_handlers import handle_callback, send_post_now
+from handlers.channel_thumb_ui import on_picture as channel_thumb_picture
 from handlers.message_handlers import handle_text, handle_media, handle_channel_info, handle_post_content, handle_tag_input
 from handlers.reaction_system import handle_reaction_toggle
 from handlers.media_handler import send_file_smart
@@ -2184,6 +2185,9 @@ def main():
                 asyncio.create_task(announce_update(app, settings.db_config["path"], ADMIN_IDS,
                                                     forced_channels, channel_problem))
                 asyncio.create_task(update_cleanup_loop(app.bot))
+                # ⏱️ auto-destructions kept on disk: also those that came due while the bot was off
+                from utils import auto_destruction
+                asyncio.create_task(auto_destruction.loop(app.bot))
                 
             except Exception as e:
                 logger.error(f"Erreur lors de l'initialisation post-startup: {e}")
@@ -2391,6 +2395,8 @@ def main():
                 SETTINGS: [
                     # Handler prioritaire pour les boutons ReplyKeyboard
                     MessageHandler(reply_keyboard_filter, handle_reply_keyboard),
+                    # the picture asked by a channel's « 🖼️ Thumbnail » → « ➕ Add a thumbnail »
+                    MessageHandler(filters.PHOTO | filters.Document.IMAGE, channel_thumb_picture),
                     CallbackQueryHandler(handle_callback),
                 ],
                 POST_ACTIONS: [

@@ -162,5 +162,9 @@
   "rename.upload": "📤 Fichier {index} : envoi sous son nouveau nom… {pct}%",
   "rename.done": "✅ Fichier renommé : <code>{name}</code>",
   "rename.failed": "❌ Le fichier {index} n'a pas pu être renommé ({error}). Il garde son ancien nom.",
+  "thumb.download": "📥 Fichier {index} : téléchargement… {pct}%",
+  "thumb.upload": "📤 Fichier {index} : envoi avec la miniature de la chaîne… {pct}%",
+  "thumb.done": "🖼️ Miniature ajoutée au fichier {index}.",
+  "thumb.failed": "❌ La miniature n'a pas pu être ajoutée au fichier {index} ({error}).",
   "send.renaming": "⏳ Fichier(s) {files} encore en cours de renommage. Réessaie dans un instant."
 }
