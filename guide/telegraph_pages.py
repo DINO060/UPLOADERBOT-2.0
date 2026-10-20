@@ -9,8 +9,8 @@ from pathlib import Path
 
 ACCOUNTS = Path.home() / ".telegraph_accounts.json"     # never in a repo: the token edits the pages
 KEY = "uploaderbot"
-NAME = "Uploader Bot"
-BOT_URL = ""                                            # t.me/<username> once known: adds « Open the bot »
+NAME = "UPLOADER BOT"
+BOT_URL = "https://t.me/RENAMSEND0_BOT"
 COMMIT = sys.argv[1] if len(sys.argv) > 1 else "main"
 IMG = f"https://cdn.jsdelivr.net/gh/DINO060/UPLOADERBOT-2.0@{COMMIT}/guide/img/"
 

@@ -22,7 +22,7 @@ WHATS_NEW_FILE = ROOT / "whatsnew.txt"
 ANNOUNCED_FILE = ROOT / "data" / "announced_version.txt"
 UPDATE_MESSAGE_TTL = 6 * 3600          # the notice deletes itself after this (the owner's wish), even across a restart
 UPDATE_MESSAGES_FILE = ROOT / "data" / "update_messages.json"
-NAME = "Uploader Bot"
+NAME = "UPLOADER BOT"
 GUIDE_EN = "https://telegra.ph/Uploader-Bot--How-to-use-it-10-20"
 GUIDE_FR = "https://telegra.ph/Uploader-Bot--Mode-demploi-10-20"
 

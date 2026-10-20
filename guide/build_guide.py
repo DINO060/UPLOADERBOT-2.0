@@ -13,7 +13,7 @@ from playwright.sync_api import sync_playwright
 HERE = Path(__file__).resolve().parent
 OUT = HERE / "img"
 WORK = Path(tempfile.mkdtemp())
-BOT = "Uploader Bot"
+BOT = "UPLOADER BOT"
 LETTER = "U"
 FONT_BOLD = "C:/Windows/Fonts/segoeuib.ttf"
 
@@ -174,7 +174,7 @@ def ep(n, tag=""):
 
 def screens(thumbs, cover):
     T = "14:02"
-    home = ("👋 Welcome to Rename & Scheduler Bot!\n\nI help you rename captions/filenames and schedule your posts to "
+    home = ("👋 Welcome to UPLOADER BOT!\n\nI help you rename captions/filenames and schedule your posts to "
             "your channels.\n\n📋 Features:\n• Rename caption/filename\n• Schedule post sending\n\n🎯 Commands:\n"
             "/start - Show this message\n/help - Show help and usage\n/addchannel - Add a new channel\n/settings - Open settings")
     menu = [[("📝 New post", "success")], [("📅 Scheduled posts", "primary")], [("⚙️ Settings", "primary")]]

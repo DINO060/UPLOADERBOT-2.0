@@ -14,7 +14,7 @@ logger = logging.getLogger('TelegramBot')
 
 
 WELCOME_TEXT = (
-    "👋 Welcome to Rename & Scheduler Bot!\n\n"
+    "👋 Welcome to UPLOADER BOT!\n\n"
     "I help you rename captions/filenames, set a custom thumbnail, and schedule your posts to your channels.\n\n"
     "📋 Features:\n"
     "• Rename caption/filename\n"

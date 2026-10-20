@@ -6,7 +6,7 @@
   "language.current": "Langue actuelle : {lang_flag} {lang_name}",
   "language.choose": "Choisissez votre langue :",
   "language.success": "✅ Langue changée avec succès !\n\nNouvelle langue : {lang_flag} {lang_name}",
-  "start.welcome": "👋 Bienvenue sur le Bot Rename & Scheduler !\n\nJe vous aide à renommer les légendes/noms de fichiers et programmer vos publications sur vos canaux.\n\n📋 Fonctionnalités :\n• Renommer légende/nom de fichier\n• Programmer l'envoi de publications\n\n🎯 Commandes :\n/start - Afficher ce message\n/help - Afficher l'aide et l'utilisation\n/addchannel - Ajouter un nouveau canal (Nom @username ou juste @username)\n/settings - Ouvrir les paramètres\n\n🛠 Commandes admin :\n/addfsub - Ajouter des canaux d'abonnement forcé (admin)\n/delfsub - Supprimer des canaux d'abonnement forcé (admin)\n/channels - Lister les canaux d'abonnement forcé (admin)\n/status - Statut du bot",
+  "start.welcome": "👋 Bienvenue sur UPLOADER BOT !\n\nJe vous aide à renommer les légendes/noms de fichiers et programmer vos publications sur vos canaux.\n\n📋 Fonctionnalités :\n• Renommer légende/nom de fichier\n• Programmer l'envoi de publications\n\n🎯 Commandes :\n/start - Afficher ce message\n/help - Afficher l'aide et l'utilisation\n/addchannel - Ajouter un nouveau canal (Nom @username ou juste @username)\n/settings - Ouvrir les paramètres\n\n🛠 Commandes admin :\n/addfsub - Ajouter des canaux d'abonnement forcé (admin)\n/delfsub - Supprimer des canaux d'abonnement forcé (admin)\n/channels - Lister les canaux d'abonnement forcé (admin)\n/status - Statut du bot",
   "help.title": "📚 Commandes Disponibles",
   "help.language": "/language - Changer la langue du bot",
   "help.timezone": "/timezone - Définir votre fuseau horaire",
