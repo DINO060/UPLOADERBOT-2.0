@@ -169,3 +169,7 @@ analysis/*.ipynb
 # the update notice: last version announced, notices waiting to be deleted
 data/announced_version.txt
 data/update_messages.json
+# the guide's pictures and videos (jsDelivr serves them to the Telegraph pages)
+!guide/img/*.png
+!guide/img/*.gif
+!guide/img/*.mp4
