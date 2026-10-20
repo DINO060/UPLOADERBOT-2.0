@@ -218,6 +218,15 @@ async def main():
     await cb.handle_callback(upd, context)
     check("« 📺 Choose channel »: the channel choice, the files kept", q.edits and context.user_data["posts"] == [{"type": "document"}]
           and "not implemented" not in q.edits[-1][0], str(q.edits))
+    upd, q = cq_update(77, "auto_destruction")
+    await cb.handle_callback(upd, ctx_for())
+    upd2, q2 = cq_update(77, "auto_dest_3600")
+    context = ctx_for()
+    await cb.handle_callback(upd2, context)
+    check("auto-destruction: in English, « Back » to the send options (it went to the main menu)",
+          q.edits and "Choose a duration" in q.edits[-1][0] and buttons(q.edits[-1][1])[-1].callback_data == "send_post"
+          and context.user_data.get("auto_destruction_time") == 3600 and "1 hour(s)" in q2.edits[-1][0]
+          and buttons(q2.edits[-1][1])[-1].callback_data == "send_post", f"{q.edits[-1:]} {q2.edits[-1:]}")
 
     # 2. force join
     admin_db = app.bot_data.get("admin_db")

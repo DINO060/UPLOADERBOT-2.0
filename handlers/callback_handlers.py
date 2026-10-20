@@ -1315,7 +1315,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                 [InlineKeyboardButton("6 hours", callback_data="auto_dest_21600")],
                 [InlineKeyboardButton("24 hours", callback_data="auto_dest_86400")],
                 [InlineKeyboardButton("❌ Disable", callback_data="auto_dest_0")],
-                [InlineKeyboardButton("↩️ Back", callback_data="main_menu")]
+                [InlineKeyboardButton("↩️ Back", callback_data="send_post")]
             ]
             
             await safe_edit_callback_message(
@@ -1337,7 +1337,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                     "✅ **Auto-destruction disabled**\n\n"
                     "Your messages will not be automatically deleted.",
                     reply_markup=InlineKeyboardMarkup([[
-                        InlineKeyboardButton("↩️ Back to send menu", callback_data="main_menu")
+                        InlineKeyboardButton("↩️ Back to send menu", callback_data="send_post")
                     ]]),
                     parse_mode='Markdown'
                 )
@@ -1349,9 +1349,9 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                 if seconds < 3600:
                     time_str = f"{seconds // 60} minute(s)"
                 elif seconds < 86400:
-                    time_str = f"{seconds // 3600} heure(s)"
+                    time_str = f"{seconds // 3600} hour(s)"
                 else:
-                    time_str = f"{seconds // 86400} jour(s)"
+                    time_str = f"{seconds // 86400} day(s)"
                 
                 await safe_edit_callback_message(
                     query,
@@ -1359,7 +1359,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                     f"⏰ Duration: {time_str}\n\n"
                     f"Your next messages will be automatically deleted after {time_str}.",
                     reply_markup=InlineKeyboardMarkup([[
-                        InlineKeyboardButton("↩️ Back to send menu", callback_data="main_menu")
+                        InlineKeyboardButton("↩️ Back to send menu", callback_data="send_post")
                     ]]),
                     parse_mode='Markdown'
                 )

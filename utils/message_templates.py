@@ -59,9 +59,7 @@ class MessageTemplates:
     def get_auto_destruction_message() -> str:
         """Retourne le message pour les options d'auto-destruction."""
         return (
-            "⏰ **Auto-destruction des messages**\n\n"
-            "Après combien de temps le message doit-il s'auto-détruire ?\n\n"
-            "📝 **Remarque :** Cette fonctionnalité utilise le système natif de Telegram "
-            "pour supprimer automatiquement les messages après la durée choisie.\n\n"
-            "Choisissez une durée :"
+            "⏰ **Auto-destruction**\n\n"
+            "After how long should the posts be deleted from your channel?\n\n"
+            "Choose a duration:"
         ) 
