@@ -1495,8 +1495,8 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             # Ne pas supprimer le canal : context.user_data.pop('selected_channel', None)
             
             await query.edit_message_text(
-                "🗑️ **Tous les posts supprimés**\n\n"
-                "📤 Envoyez maintenant vos nouveaux fichiers :"
+                "🗑️ **All posts deleted**\n\n"
+                "📤 Now send your new files:"
             )
             return WAITING_PUBLICATION_CONTENT
             
@@ -1989,7 +1989,7 @@ async def handle_post_type(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             return 4  # WAITING_TEXT
 
         await query.edit_message_text(
-            "Envoyez la photo ou la vidéo:"
+            "Send the photo or video:"
         )
         return 5  # WAITING_MEDIA
 
@@ -2034,7 +2034,7 @@ async def handle_schedule_type(update: Update, context: ContextTypes.DEFAULT_TYP
             return 6  # WAITING_SCHEDULE_TEXT
 
         await query.edit_message_text(
-            "Envoyez la photo ou la vidéo:"
+            "Send the photo or video:"
         )
         return 7  # WAITING_SCHEDULE_MEDIA
 
@@ -2445,7 +2445,7 @@ async def handle_edit_time(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.edit_message_text(
                 "❌ Publication introuvable.",
                 reply_markup=InlineKeyboardMarkup([[
-                    InlineKeyboardButton("↩️ Menu principal", callback_data="main_menu")
+                    InlineKeyboardButton("↩️ Main menu", callback_data="main_menu")
                 ]])
             )
             return MAIN_MENU
@@ -2484,7 +2484,7 @@ async def handle_edit_time(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(
             "❌ Une erreur est survenue lors de la modification de l'heure.",
             reply_markup=InlineKeyboardMarkup([[
-                InlineKeyboardButton("↩️ Menu principal", callback_data="main_menu")
+                InlineKeyboardButton("↩️ Main menu", callback_data="main_menu")
             ]])
         )
         return MAIN_MENU
@@ -2501,7 +2501,7 @@ async def handle_cancel_post(update: Update, context: ContextTypes.DEFAULT_TYPE)
             await query.edit_message_text(
                 "❌ Publication introuvable.",
                 reply_markup=InlineKeyboardMarkup([[
-                    InlineKeyboardButton("↩️ Menu principal", callback_data="main_menu")
+                    InlineKeyboardButton("↩️ Main menu", callback_data="main_menu")
                 ]])
             )
             return MAIN_MENU
@@ -2524,7 +2524,7 @@ async def handle_cancel_post(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await query.edit_message_text(
             "❌ Une erreur est survenue lors de l'annulation.",
             reply_markup=InlineKeyboardMarkup([[
-                InlineKeyboardButton("↩️ Menu principal", callback_data="main_menu")
+                InlineKeyboardButton("↩️ Main menu", callback_data="main_menu")
             ]])
         )
         return MAIN_MENU
@@ -2560,7 +2560,7 @@ async def handle_confirm_cancel(update: Update, context: ContextTypes.DEFAULT_TY
         await query.message.reply_text(
             "✅ Publication planifiée supprimée avec succès!",
             reply_markup=InlineKeyboardMarkup([[
-                InlineKeyboardButton("↩️ Menu principal", callback_data="main_menu")
+                InlineKeyboardButton("↩️ Main menu", callback_data="main_menu")
             ]])
         )
         
@@ -2573,7 +2573,7 @@ async def handle_confirm_cancel(update: Update, context: ContextTypes.DEFAULT_TY
         await query.message.reply_text(
             "❌ Erreur lors de la suppression de la publication.",
             reply_markup=InlineKeyboardMarkup([[
-                InlineKeyboardButton("↩️ Menu principal", callback_data="main_menu")
+                InlineKeyboardButton("↩️ Main menu", callback_data="main_menu")
             ]])
         )
         return MAIN_MENU
@@ -2668,9 +2668,9 @@ async def select_channel(update: Update, context: ContextTypes.DEFAULT_TYPE, cha
 
     if not channel:
         await query.edit_message_text(
-            "❌ Canal non trouvé.",
+            "❌ Channel not found.",
             reply_markup=InlineKeyboardMarkup([[
-                InlineKeyboardButton("↩️ Menu principal", callback_data="main_menu")
+                InlineKeyboardButton("↩️ Main menu", callback_data="main_menu")
             ]])
         )
         return MAIN_MENU
@@ -3025,17 +3025,17 @@ async def handle_manual_timezone(update: Update, context: ContextTypes.DEFAULT_T
     # Stocker qu'on attend une saisie de fuseau horaire
     context.user_data['waiting_for_timezone'] = True
     
-    keyboard = [[InlineKeyboardButton("❌ Annuler", callback_data="timezone_settings")]]
+    keyboard = [[InlineKeyboardButton("❌ Cancel", callback_data="timezone_settings")]]
     
     await query.edit_message_text(
-        "✏️ Saisie manuelle du fuseau horaire\n\n"
-        "Envoyez-moi votre fuseau horaire au format standard.\n\n"
-        "Exemples :\n"
+        "✏️ Type your timezone\n\n"
+        "Send me your timezone in the standard format.\n\n"
+        "Examples:\n"
         "• Europe/Paris\n"
         "• America/New_York\n"
         "• Asia/Tokyo\n"
         "• Africa/Cairo\n\n"
-        "💡 Vous pouvez trouver la liste complète sur:\n"
+        "💡 The full list:\n"
         "https://en.wikipedia.org/wiki/List_of_tz_database_time_zones",
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
@@ -3130,7 +3130,7 @@ async def handle_create_publication(update: Update, context: ContextTypes.DEFAUL
         
         keyboard = [
             [InlineKeyboardButton("🔄 Retry", callback_data="create_publication")],
-            [InlineKeyboardButton("↩️ Menu principal", callback_data="main_menu")]
+            [InlineKeyboardButton("↩️ Main menu", callback_data="main_menu")]
         ]
         
         try:
@@ -3338,7 +3338,7 @@ async def show_scheduled_post(update: Update, context: ContextTypes.DEFAULT_TYPE
             await query.edit_message_text(
                 "❌ Publication introuvable.",
                 reply_markup=InlineKeyboardMarkup([[
-                    InlineKeyboardButton("↩️ Menu principal", callback_data="main_menu")
+                    InlineKeyboardButton("↩️ Main menu", callback_data="main_menu")
                 ]])
             )
             return MAIN_MENU
@@ -3456,7 +3456,7 @@ async def show_scheduled_post(update: Update, context: ContextTypes.DEFAULT_TYPE
         await query.edit_message_text(
             "❌ Une erreur est survenue lors de l'affichage de la publication.",
             reply_markup=InlineKeyboardMarkup([[
-                InlineKeyboardButton("↩️ Menu principal", callback_data="main_menu")
+                InlineKeyboardButton("↩️ Main menu", callback_data="main_menu")
             ]])
         )
         return MAIN_MENU
@@ -3476,7 +3476,7 @@ async def show_edit_file_menu(update: Update, context: ContextTypes.DEFAULT_TYPE
                 query,
                 "❌ Post introuvable.",
                 reply_markup=InlineKeyboardMarkup([[
-                    InlineKeyboardButton("↩️ Menu principal", callback_data="main_menu")
+                    InlineKeyboardButton("↩️ Main menu", callback_data="main_menu")
                 ]])
             )
             return MAIN_MENU
@@ -3492,9 +3492,9 @@ async def show_edit_file_menu(update: Update, context: ContextTypes.DEFAULT_TYPE
         from utils.message_utils import safe_edit_message_text
         await safe_edit_message_text(
             query,
-            f"✏️ **Édition du fichier {post_index + 1}**\n\n"
+            f"✏️ **Edit file {post_index + 1}**\n\n"
             f"Type: {post['type']}\n"
-            f"Choisissez une action :",
+            f"Choose an action:",
             reply_markup=InlineKeyboardMarkup(keyboard),
             parse_mode="Markdown"
         )
@@ -3508,7 +3508,7 @@ async def show_edit_file_menu(update: Update, context: ContextTypes.DEFAULT_TYPE
             query,
             "❌ Une erreur est survenue.",
             reply_markup=InlineKeyboardMarkup([[
-                InlineKeyboardButton("↩️ Menu principal", callback_data="main_menu")
+                InlineKeyboardButton("↩️ Main menu", callback_data="main_menu")
             ]])
         )
         return MAIN_MENU
@@ -3526,7 +3526,7 @@ async def handle_rename_post(update: Update, context: ContextTypes.DEFAULT_TYPE,
                 query,
                 "❌ Post introuvable.",
                 reply_markup=InlineKeyboardMarkup([[
-                    InlineKeyboardButton("↩️ Menu principal", callback_data="main_menu")
+                    InlineKeyboardButton("↩️ Main menu", callback_data="main_menu")
                 ]])
             )
             return MAIN_MENU
@@ -3543,14 +3543,14 @@ async def handle_rename_post(update: Update, context: ContextTypes.DEFAULT_TYPE,
         
         # Envoyer un nouveau message de prompt (au lieu d'éditer)
         prompt_text = (
-            f"✏️ **Renommer le fichier {post_index + 1}**\n\n"
-            "Envoyez le nouveau nom/titre pour ce fichier :"
+            f"✏️ **Rename file {post_index + 1}**\n\n"
+            "Send the new name/title for this file:"
         )
         ask_msg = await context.bot.send_message(
             chat_id=query.message.chat_id,
             text=prompt_text,
             reply_markup=InlineKeyboardMarkup([[
-                InlineKeyboardButton("❌ Annuler", callback_data=f"cancel_rename_{post_index}")
+                InlineKeyboardButton("❌ Cancel", callback_data=f"cancel_rename_{post_index}")
             ]]),
             parse_mode="Markdown"
         )
@@ -3720,7 +3720,7 @@ async def schedule_send(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await safe_edit_callback_message(
             query,
             "❌ Erreur lors de la planification.",
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("↩️ Retour", callback_data="main_menu")]])
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("↩️ Back", callback_data="main_menu")]])
         )
         return MAIN_MENU
 
@@ -3790,14 +3790,14 @@ async def send_post_now(update, context, scheduled_post=None):
                     await update.message.reply_text(
                         "❌ Il n'y a pas de fichiers à envoyer.",
                         reply_markup=InlineKeyboardMarkup([[ 
-                            InlineKeyboardButton("↩️ Menu principal", callback_data="main_menu")
+                            InlineKeyboardButton("↩️ Main menu", callback_data="main_menu")
                         ]])
                     )
                 elif hasattr(update, 'callback_query') and update.callback_query:
                     await update.callback_query.message.reply_text(
                         "❌ Il n'y a pas de fichiers à envoyer.",
                         reply_markup=InlineKeyboardMarkup([[ 
-                            InlineKeyboardButton("↩️ Menu principal", callback_data="main_menu")
+                            InlineKeyboardButton("↩️ Main menu", callback_data="main_menu")
                         ]])
                     )
                 return MAIN_MENU
@@ -3829,20 +3829,20 @@ async def send_post_now(update, context, scheduled_post=None):
             logger.warning(f"⚠️ No valid channel selected for posts. Selected: {selected_channel}")
             if update.message:
                 await update.message.reply_text(
-                    "⚠️ **Aucun canal n'est sélectionné pour ce post.**\n\n"
-                    "👉 Veuillez d'abord sélectionner un canal, puis réessayez.",
+                    "⚠️ **No channel is selected for this post.**\n\n"
+                    "👉 Choose a channel first, then try again.",
                     reply_markup=InlineKeyboardMarkup([
-                        [InlineKeyboardButton("📺 Choisir un canal", callback_data="choose_channel")],
-                        [InlineKeyboardButton("↩️ Menu principal", callback_data="main_menu")]
+                        [InlineKeyboardButton("📺 Choose channel", callback_data="choose_channel")],
+                        [InlineKeyboardButton("↩️ Main menu", callback_data="main_menu")]
                     ])
                 )
             elif hasattr(update, 'callback_query') and update.callback_query:
                 await update.callback_query.message.reply_text(
-                    "⚠️ **Aucun canal n'est sélectionné pour ce post.**\n\n"
-                    "👉 Veuillez d'abord sélectionner un canal, puis réessayez.",
+                    "⚠️ **No channel is selected for this post.**\n\n"
+                    "👉 Choose a channel first, then try again.",
                     reply_markup=InlineKeyboardMarkup([
-                        [InlineKeyboardButton("📺 Choisir un canal", callback_data="choose_channel")],
-                        [InlineKeyboardButton("↩️ Menu principal", callback_data="main_menu")]
+                        [InlineKeyboardButton("📺 Choose channel", callback_data="choose_channel")],
+                        [InlineKeyboardButton("↩️ Main menu", callback_data="main_menu")]
                     ])
                 )
             return MAIN_MENU
@@ -4117,14 +4117,14 @@ async def send_post_now(update, context, scheduled_post=None):
             await update.message.reply_text(
                 success_message,
                 reply_markup=InlineKeyboardMarkup([[ 
-                    InlineKeyboardButton("↩️ Menu principal", callback_data="main_menu")
+                    InlineKeyboardButton("↩️ Main menu", callback_data="main_menu")
                 ]])
             )
         elif hasattr(update, 'callback_query') and update.callback_query:
             await update.callback_query.message.reply_text(
                 success_message,
                 reply_markup=InlineKeyboardMarkup([[ 
-                    InlineKeyboardButton("↩️ Menu principal", callback_data="main_menu")
+                    InlineKeyboardButton("↩️ Main menu", callback_data="main_menu")
                 ]])
             )
 
@@ -4141,14 +4141,14 @@ async def send_post_now(update, context, scheduled_post=None):
             await update.message.reply_text(
                 error_message,
                 reply_markup=InlineKeyboardMarkup([[
-                    InlineKeyboardButton("↩️ Menu principal", callback_data="main_menu")
+                    InlineKeyboardButton("↩️ Main menu", callback_data="main_menu")
                 ]])
             )
         elif hasattr(update, 'callback_query') and update.callback_query:
             await update.callback_query.message.reply_text(
                 error_message,
                 reply_markup=InlineKeyboardMarkup([[
-                    InlineKeyboardButton("↩️ Menu principal", callback_data="main_menu")
+                    InlineKeyboardButton("↩️ Main menu", callback_data="main_menu")
                 ]])
             )
             
@@ -4361,7 +4361,7 @@ async def handle_send_scheduled_post(update: Update, context: ContextTypes.DEFAU
                 f"📍 Canal : {channel}\n"
                 f"📝 Type : {post_type}",
                 reply_markup=InlineKeyboardMarkup([[
-                    InlineKeyboardButton("↩️ Menu principal", callback_data="main_menu")
+                    InlineKeyboardButton("↩️ Main menu", callback_data="main_menu")
                 ]]),
                 parse_mode='Markdown'
             )
@@ -4380,7 +4380,7 @@ async def handle_send_scheduled_post(update: Update, context: ContextTypes.DEFAU
             f"Détails: {str(e)}\n\n"
             f"Vérifiez que le bot est administrateur du canal.",
             reply_markup=InlineKeyboardMarkup([[
-                InlineKeyboardButton("↩️ Menu principal", callback_data="main_menu")
+                InlineKeyboardButton("↩️ Main menu", callback_data="main_menu")
             ]]),
             parse_mode='Markdown'
         )

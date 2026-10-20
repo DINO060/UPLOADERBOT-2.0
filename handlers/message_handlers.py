@@ -608,7 +608,7 @@ async def handle_channel_info(update: Update, context: ContextTypes.DEFAULT_TYPE
         await update.message.reply_text(
             "❌ An error occurred.",
             reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("↩️ Menu principal", callback_data="main_menu")]
+                [InlineKeyboardButton("↩️ Main menu", callback_data="main_menu")]
             ])
         )
         return MAIN_MENU
@@ -643,8 +643,8 @@ async def handle_post_content(update: Update, context: ContextTypes.DEFAULT_TYPE
                 "⚠️ **Aucun canal n'est sélectionné pour ce post.**\n\n"
                 "👉 Veuillez d'abord sélectionner un canal, puis réessayez.",
                 reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("📺 Choisir un canal", callback_data="create_publication")],
-                    [InlineKeyboardButton("↩️ Menu principal", callback_data="main_menu")]
+                    [InlineKeyboardButton("📺 Choose channel", callback_data="create_publication")],
+                    [InlineKeyboardButton("↩️ Main menu", callback_data="main_menu")]
                 ])
             )
             return MAIN_MENU
@@ -754,7 +754,7 @@ async def handle_post_content(update: Update, context: ContextTypes.DEFAULT_TYPE
         await update.message.reply_text(
             "❌ An error occurred while processing the content.",
             reply_markup=InlineKeyboardMarkup([[
-                InlineKeyboardButton("↩️ Menu principal", callback_data="main_menu")
+                InlineKeyboardButton("↩️ Main menu", callback_data="main_menu")
             ]])
         )
         return MAIN_MENU
@@ -938,7 +938,7 @@ async def handle_tag_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -
                     await update.message.reply_text(
                         "❌ Erreur lors de la mise à jour du fuseau horaire.",
                         reply_markup=InlineKeyboardMarkup([[
-                            InlineKeyboardButton("↩️ Retour", callback_data="timezone_settings")
+                            InlineKeyboardButton("↩️ Back", callback_data="timezone_settings")
                         ]])
                     )
                 
@@ -1002,7 +1002,7 @@ async def handle_tag_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             await update.message.reply_text(
                 "❌ Erreur: Canal introuvable.",
                 reply_markup=InlineKeyboardMarkup([[
-                    InlineKeyboardButton("↩️ Menu principal", callback_data="main_menu")
+                    InlineKeyboardButton("↩️ Main menu", callback_data="main_menu")
                 ]])
             )
             return MAIN_MENU
@@ -1094,7 +1094,7 @@ async def handle_tag_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         await update.message.reply_text(
             "❌ Une erreur est survenue lors de l'enregistrement des hashtags.",
             reply_markup=InlineKeyboardMarkup([[
-                InlineKeyboardButton("↩️ Menu principal", callback_data="main_menu")
+                InlineKeyboardButton("↩️ Main menu", callback_data="main_menu")
             ]])
         )
         return MAIN_MENU

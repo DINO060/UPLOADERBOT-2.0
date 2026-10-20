@@ -7,4 +7,5 @@
 - A post that fails is shown by name and kept, and scheduled posts are sent even after the bot was off.
 - ✏️ Edit File → Rename now really renames the file in your channel (up to 2 GB).
 - Buttons on old messages work again after a restart (↩️ Main menu), and « I have joined » was added.
+- The last screens still in French (reactions, URL button, rename, timezone) are now in English.
 - A new guide with pictures and a short video: /help

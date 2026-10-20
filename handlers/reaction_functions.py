@@ -176,12 +176,12 @@ async def add_reactions_to_post(update: Update, context: ContextTypes.DEFAULT_TY
             try:
                 await query.edit_message_text(
                     "❌ Post introuvable.",
-                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("↩️ Retour", callback_data="main_menu")]])
+                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("↩️ Back", callback_data="main_menu")]])
                 )
             except Exception:
                 await query.message.reply_text(
                     "❌ Post introuvable.",
-                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("↩️ Retour", callback_data="main_menu")]])
+                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("↩️ Back", callback_data="main_menu")]])
                 )
             return MAIN_MENU
         
@@ -192,10 +192,10 @@ async def add_reactions_to_post(update: Update, context: ContextTypes.DEFAULT_TY
         # Demander les réactions à l'utilisateur et mémoriser le prompt pour nettoyage
         prompt = await context.bot.send_message(
             chat_id=update.effective_chat.id,
-            text="📝 Envoyez-moi les réactions séparées par des '/'.\n"
-                 "Exemple: 👍/❤️/🔥/😂\n\n"
-                 "Maximum 8 réactions autorisées.",
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Annuler", callback_data="cancel_waiting_reactions")]])
+            text="📝 Send me the reactions, separated by '/'.\n"
+                 "Example: 👍/❤️/🔥/😂\n\n"
+                 "Up to 8 reactions.",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data="cancel_waiting_reactions")]])
         )
         context.user_data['reaction_input_ctx'] = {
             'prompt_chat_id': prompt.chat_id,
@@ -210,12 +210,12 @@ async def add_reactions_to_post(update: Update, context: ContextTypes.DEFAULT_TY
         try:
             await query.edit_message_text(
                 "❌ Erreur lors de l'ajout des réactions.",
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("↩️ Retour", callback_data="main_menu")]])
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("↩️ Back", callback_data="main_menu")]])
             )
         except Exception:
             await query.message.reply_text(
                 "❌ Erreur lors de l'ajout des réactions.",
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("↩️ Retour", callback_data="main_menu")]])
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("↩️ Back", callback_data="main_menu")]])
             )
         return MAIN_MENU
 
@@ -233,12 +233,12 @@ async def add_url_button_to_post(update: Update, context: ContextTypes.DEFAULT_T
             try:
                 await query.edit_message_text(
                     "❌ Post introuvable.",
-                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("↩️ Retour", callback_data="main_menu")]])
+                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("↩️ Back", callback_data="main_menu")]])
                 )
             except Exception:
                 await query.message.reply_text(
                     "❌ Post introuvable.",
-                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("↩️ Retour", callback_data="main_menu")]])
+                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("↩️ Back", callback_data="main_menu")]])
                 )
             return MAIN_MENU
         
@@ -250,10 +250,10 @@ async def add_url_button_to_post(update: Update, context: ContextTypes.DEFAULT_T
         # Envoyer un nouveau message au lieu d'éditer (pour compatibilité avec les médias)
         ask_msg = await context.bot.send_message(
             chat_id=update.effective_chat.id,
-            text="📝 Envoyez-moi le bouton URL au format :\n"
-                 "Texte du bouton | URL\n\n"
-                 "Exemple : Visiter le site | https://example.com",
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Annuler", callback_data="cancel_waiting_url")]])
+            text="📝 Send me the URL button as:\n"
+                 "Button text | URL\n\n"
+                 "Example: Visit the site | https://example.com",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data="cancel_waiting_url")]])
         )
         # Mémoriser pour suppression
         context.user_data['last_prompt_message_id'] = ask_msg.message_id
@@ -265,12 +265,12 @@ async def add_url_button_to_post(update: Update, context: ContextTypes.DEFAULT_T
         try:
             await query.edit_message_text(
                 "❌ Erreur lors de l'ajout du bouton URL.",
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("↩️ Retour", callback_data="main_menu")]])
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("↩️ Back", callback_data="main_menu")]])
             )
         except Exception:
             await query.message.reply_text(
                 "❌ Erreur lors de l'ajout du bouton URL.",
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("↩️ Retour", callback_data="main_menu")]])
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("↩️ Back", callback_data="main_menu")]])
             )
         return MAIN_MENU
 
@@ -408,7 +408,7 @@ async def handle_reaction_input(update, context):
         logger.error(f"Erreur lors du traitement des réactions : {e}")
         await update.message.reply_text(
             "❌ Erreur lors du traitement des réactions.",
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("↩️ Menu principal", callback_data="main_menu")]])
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("↩️ Main menu", callback_data="main_menu")]])
         )
         return WAITING_PUBLICATION_CONTENT
 
@@ -554,7 +554,7 @@ async def handle_url_input(update, context):
         logger.error(f"Erreur lors du traitement du bouton URL : {e}")
         await update.message.reply_text(
             "❌ Erreur lors du traitement du bouton URL.",
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("↩️ Menu principal", callback_data="main_menu")]])
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("↩️ Main menu", callback_data="main_menu")]])
         )
         return WAITING_PUBLICATION_CONTENT
 

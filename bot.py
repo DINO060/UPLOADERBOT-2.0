@@ -1254,7 +1254,7 @@ async def handle_set_thumbnail_and_rename(update, context):
                 chat_id=query.message.chat_id,
                 text="❌ Post introuvable.",
                 reply_markup=InlineKeyboardMarkup([[
-                    InlineKeyboardButton("↩️ Menu principal", callback_data="main_menu")
+                    InlineKeyboardButton("↩️ Main menu", callback_data="main_menu")
                 ]])
             )
             return MAIN_MENU
@@ -1271,7 +1271,7 @@ async def handle_set_thumbnail_and_rename(update, context):
                 chat_id=query.message.chat_id,
                 text="❌ Impossible de déterminer le canal cible.",
                 reply_markup=InlineKeyboardMarkup([[
-                    InlineKeyboardButton("↩️ Menu principal", callback_data="main_menu")
+                    InlineKeyboardButton("↩️ Main menu", callback_data="main_menu")
                 ]])
             )
             return MAIN_MENU
@@ -1297,7 +1297,7 @@ async def handle_set_thumbnail_and_rename(update, context):
                  f"Maintenant, envoyez-moi le nouveau nom pour votre fichier (avec l'extension).\n"
                  f"Par exemple: mon_document.pdf",
             reply_markup=InlineKeyboardMarkup([[
-                InlineKeyboardButton("❌ Annuler", callback_data=f"cancel_rename_{post_index}")
+                InlineKeyboardButton("❌ Cancel", callback_data=f"cancel_rename_{post_index}")
             ]])
         )
         
@@ -1309,7 +1309,7 @@ async def handle_set_thumbnail_and_rename(update, context):
             chat_id=query.message.chat_id,
             text="❌ Une erreur est survenue.",
             reply_markup=InlineKeyboardMarkup([[
-                InlineKeyboardButton("↩️ Menu principal", callback_data="main_menu")
+                InlineKeyboardButton("↩️ Main menu", callback_data="main_menu")
             ]])
         )
         return MAIN_MENU
@@ -1328,7 +1328,7 @@ async def handle_view_thumbnail(update, context):
         await query.edit_message_text(
             "❌ Aucun canal sélectionné.",
             reply_markup=InlineKeyboardMarkup([[
-                InlineKeyboardButton("↩️ Retour", callback_data="custom_settings")
+                InlineKeyboardButton("↩️ Back", callback_data="custom_settings")
             ]])
         )
         return SETTINGS
@@ -1361,14 +1361,14 @@ async def handle_view_thumbnail(update, context):
             await query.edit_message_text(
                 "❌ Unable to display thumbnail.",
                 reply_markup=InlineKeyboardMarkup([[
-                    InlineKeyboardButton("↩️ Retour", callback_data="thumbnail_menu")
+                    InlineKeyboardButton("↩️ Back", callback_data="thumbnail_menu")
                 ]])
             )
     else:
         await query.edit_message_text(
             "❌ No thumbnail saved for this channel.",
             reply_markup=InlineKeyboardMarkup([[
-                InlineKeyboardButton("↩️ Retour", callback_data="thumbnail_menu")
+                InlineKeyboardButton("↩️ Back", callback_data="thumbnail_menu")
             ]])
         )
     
@@ -1388,7 +1388,7 @@ async def handle_delete_thumbnail(update, context):
         await query.edit_message_text(
             "❌ Aucun canal sélectionné.",
             reply_markup=InlineKeyboardMarkup([[
-                InlineKeyboardButton("↩️ Retour", callback_data="custom_settings")
+                InlineKeyboardButton("↩️ Back", callback_data="custom_settings")
             ]])
         )
         return SETTINGS
@@ -1400,14 +1400,14 @@ async def handle_delete_thumbnail(update, context):
         await query.edit_message_text(
             f"✅ Thumbnail supprimé pour @{clean_username}",
             reply_markup=InlineKeyboardMarkup([[
-                InlineKeyboardButton("↩️ Retour", callback_data="thumbnail_menu")
+                InlineKeyboardButton("↩️ Back", callback_data="thumbnail_menu")
             ]])
         )
     else:
         await query.edit_message_text(
             "❌ Error deleting thumbnail.",
             reply_markup=InlineKeyboardMarkup([[
-                InlineKeyboardButton("↩️ Retour", callback_data="thumbnail_menu")
+                InlineKeyboardButton("↩️ Back", callback_data="thumbnail_menu")
             ]])
         )
     
@@ -1431,7 +1431,7 @@ async def handle_thumbnail_rename_input(update, context):
         await update.message.reply_text(
             "❌ Une erreur est survenue.",
             reply_markup=InlineKeyboardMarkup([[ 
-                InlineKeyboardButton("↩️ Menu principal", callback_data="main_menu")
+                InlineKeyboardButton("↩️ Main menu", callback_data="main_menu")
             ]])
         )
         return MAIN_MENU
@@ -1451,7 +1451,7 @@ async def handle_add_thumbnail_and_rename(update, context):
                 chat_id=query.message.chat_id,
                 text="❌ Post introuvable.",
                 reply_markup=InlineKeyboardMarkup([[
-                    InlineKeyboardButton("↩️ Menu principal", callback_data="main_menu")
+                    InlineKeyboardButton("↩️ Main menu", callback_data="main_menu")
                 ]])
             )
             return MAIN_MENU
@@ -1468,7 +1468,7 @@ async def handle_add_thumbnail_and_rename(update, context):
                 chat_id=query.message.chat_id,
                 text="❌ Impossible de déterminer le canal cible.",
                 reply_markup=InlineKeyboardMarkup([[
-                    InlineKeyboardButton("↩️ Menu principal", callback_data="main_menu")
+                    InlineKeyboardButton("↩️ Main menu", callback_data="main_menu")
                 ]])
             )
             return MAIN_MENU
@@ -1485,7 +1485,7 @@ async def handle_add_thumbnail_and_rename(update, context):
                      f"Veuillez d'abord configurer un thumbnail dans les paramètres.",
                 reply_markup=InlineKeyboardMarkup([[
                     InlineKeyboardButton("⚙️ Settings", callback_data="settings", api_kwargs={"style": "primary"}),
-                    InlineKeyboardButton("↩️ Menu principal", callback_data="main_menu")
+                    InlineKeyboardButton("↩️ Main menu", callback_data="main_menu")
                 ]])
             )
             return MAIN_MENU
@@ -1520,7 +1520,7 @@ async def handle_add_thumbnail_and_rename(update, context):
             text=info_card,
             parse_mode='HTML',
             reply_markup=InlineKeyboardMarkup([[
-                InlineKeyboardButton("❌ Annuler", callback_data=f"cancel_thumbnail_rename_{post_index}")
+                InlineKeyboardButton("❌ Cancel", callback_data=f"cancel_thumbnail_rename_{post_index}")
             ]])
         )
         
@@ -1537,7 +1537,7 @@ async def handle_add_thumbnail_and_rename(update, context):
             chat_id=query.message.chat_id,
             text="❌ Une erreur est survenue.",
             reply_markup=InlineKeyboardMarkup([[
-                InlineKeyboardButton("↩️ Menu principal", callback_data="main_menu")
+                InlineKeyboardButton("↩️ Main menu", callback_data="main_menu")
             ]])
         )
         return MAIN_MENU
@@ -1930,8 +1930,8 @@ async def handle_send_button(update, context):
                 "⚠️ **Aucun canal n'est sélectionné pour ce post.**\n\n"
                 "👉 Veuillez d'abord sélectionner un canal, puis réessayez.",
                 reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("📺 Choisir un canal", callback_data="choose_channel")],
-                    [InlineKeyboardButton("↩️ Menu principal", callback_data="main_menu")]
+                    [InlineKeyboardButton("📺 Choose channel", callback_data="choose_channel")],
+                    [InlineKeyboardButton("↩️ Main menu", callback_data="main_menu")]
                 ])
             )
             return WAITING_PUBLICATION_CONTENT
